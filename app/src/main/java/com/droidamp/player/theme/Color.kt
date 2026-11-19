@@ -1,4 +1,4 @@
-package com.example.pixelamp.theme
+package com.droidamp.player.theme
 
 import androidx.compose.ui.graphics.Color
 

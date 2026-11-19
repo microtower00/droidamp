@@ -1,9 +1,9 @@
-package com.example.pixelamp.ui.main
+package com.droidamp.player.ui.main
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.pixelamp.data.DataRepository
-import com.example.pixelamp.ui.main.MainScreenUiState.Success
+import com.droidamp.player.data.DataRepository
+import com.droidamp.player.ui.main.MainScreenUiState.Success
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch

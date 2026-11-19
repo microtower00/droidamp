@@ -1,4 +1,4 @@
-package com.example.pixelamp.ui.main
+package com.droidamp.player.ui.main
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.Text
@@ -9,8 +9,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation3.runtime.NavKey
-import com.example.pixelamp.data.DefaultDataRepository
-import com.example.pixelamp.theme.PixelAmpTheme
+import com.droidamp.player.data.DefaultDataRepository
+import com.droidamp.player.theme.DroidAmpTheme
 
 @Composable
 fun MainScreen(
@@ -45,11 +45,11 @@ fun Greeting(name: String, modifier: Modifier = Modifier) {
 @Preview(showBackground = true)
 @Composable
 fun MainScreenPreview() {
-  PixelAmpTheme { MainScreen(listOf("Android")) }
+  DroidAmpTheme { MainScreen(listOf("Android")) }
 }
 
 @Preview(showBackground = true, widthDp = 340)
 @Composable
 fun MainScreenPortraitPreview() {
-  PixelAmpTheme { MainScreen(listOf("Android")) }
+  DroidAmpTheme { MainScreen(listOf("Android")) }
 }

@@ -5,10 +5,10 @@ plugins {
 }
 
 android {
-    namespace = "com.example.pixelamp"
+    namespace = "com.droidamp.player"
     compileSdk = 36
     defaultConfig {
-        applicationId = "com.example.pixelamp"
+        applicationId = "com.droidamp.player"
         minSdk = 24
         targetSdk = 36
         versionCode = 1

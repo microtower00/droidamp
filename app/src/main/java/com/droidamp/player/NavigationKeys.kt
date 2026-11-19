@@ -1,4 +1,4 @@
-package com.example.pixelamp
+package com.droidamp.player
 
 import androidx.navigation3.runtime.NavKey
 import kotlinx.serialization.Serializable

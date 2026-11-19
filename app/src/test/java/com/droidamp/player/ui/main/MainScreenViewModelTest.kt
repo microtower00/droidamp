@@ -1,6 +1,6 @@
-package com.example.pixelamp.ui.main
+package com.droidamp.player.ui.main
 
-import com.example.pixelamp.data.DataRepository
+import com.droidamp.player.data.DataRepository
 import junit.framework.TestCase.assertEquals
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first

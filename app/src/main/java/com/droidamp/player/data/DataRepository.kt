@@ -1,4 +1,4 @@
-package com.example.pixelamp.data
+package com.droidamp.player.data
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
