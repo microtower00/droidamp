@@ -18,14 +18,45 @@ This playbook documents how to build **DroidAmp** efficiently across sessions us
 
 ---
 
-## 1. Milestone-by-Milestone Orchestration Plan
+## 1. Model & Orchestrator Selection Guide
+
+Use the lightest model that reliably nails the task, and take advantage of the **two separate quota pools** in your `agy` setup (**Gemini / Orchestrator pool** vs. **Claude / GPT-OSS pool**) for parallel `/teamwork` runs and cross-family code reviews.
+
+### Quick Role-to-Model Matrix
+
+| Task / Role | Best Fit | Effort Tier | Why |
+| :--- | :--- | :--- | :--- |
+| **Multi-agent Coordinator (`/teamwork`)** | **Orchestrator (Neon)** *(alternatives: Orchestrator Argon / Carbon)* | — | Purpose-built for long-horizon task decomposition, worker coordination, branch merging, and milestone tracking. |
+| **Architecture, `DroidAmpSkin` Contract & Custom Compose Hardware UI (M1)** | **Gemini 4 Neon** or **Claude Opus 5.5** | `High` *(or `XHigh` for Neon on tricky gesture physics)* | Strong spatial/Compose reasoning for 3D pixel bevels, EQ curve drawing + sheet swipe conflict resolution, and clean interfaces. |
+| **Audio DSP, Biquad 10-Band EQ, Lock-Free FFT & Crossfade (M2)** | **Gemini 4 Neon**, **Gemini 4 Hydrogen**, or **Claude Opus 5.5** | `High` / `XHigh` | Real-time PCM math, IIR filter stability, concurrency/ring-buffer safety, and Media3 lifecycle edge cases reward deep reasoning. |
+| **Storage (`SAF` + `MediaStore`), Playlist Queue & Library UI (M3)** | **Claude Sonnet 5.5** or **Gemini 4 Argon / Neon** | `Medium` / `High` | Fast, reliable Android/Kotlin implementation with great adherence to select-first and repository contracts. |
+| **Winamp Binary/Text Parsers (`.eqf`, `q1/q2`, `winamp.ini`, `.m3u`, `.pls`) (M4)** | **Claude Sonnet 5.5** or **Gemini 4 Carbon / Argon** | `Medium` | Clean, well-scoped specs with deterministic round-trip unit tests; no need to burn top-tier reasoning quota. |
+| **`.wsz` Skin Parser & Sprite Slicer (M5)** | **Gemini 4 Neon** or **Claude Opus 5.5** | `High` | Handles BMP coordinate tables, malformed community `.wsz` edge cases, `viscolor.txt`/`pledit.txt`, and crisp nearest-neighbor Compose rendering. |
+| **Settings UI & UX Polish (M6)** | **Claude Sonnet 5.5** or **Gemini 4 Neon** | `Medium` / `High` | Clean UI integration + `/grill-me` design pass before wiring. |
+| **Visual QA (`android screenshot` & `android layout`)** | **Gemini 4 Neon** *(multimodal)* | `Medium` / `High` | Strong vision inspection for 1px bevel alignment, Preamp gap, VFD phosphor contrast, and gesture-bar clearance. |
+| **Cross-Family Code & ADR Review (`run_workflow`)** | **Opposite family of the author** (e.g., author = Neon → reviewer = **Claude Opus/Sonnet 5.5**, or vice versa) | `High` / `Medium` | Different model families catch each other's blind spots and balance load across both quota pools. |
+| **Read-Only Research, Docs Search & Boilerplate Fan-Out** | **Gemini 3.8 Flash** or **GPT-OSS 120B (Medium)** | `Low` / `Medium` | Ultra-fast and cheap for `android docs search`, exploring files, generating test fixtures, and parallel lint/check passes. |
+
+### Recommended `/teamwork` Pinning for Milestones 2–4
+To maximize speed and avoid exhausting one quota pool:
+- **Coordinator**: `Orchestrator (Neon)`
+- **`dsp` worker**: `Gemini 4 Neon (High)` *(or `Claude Opus 5.5 (High)`)*
+- **`storage` worker**: `Claude Sonnet 5.5 (High)`
+- **`winamp-io` worker**: `Gemini 4 Argon (Medium)` *(or `Gemini 3.8 Flash (High)` for fast TDD iterations)*
+- **`qa` worker (post-merge visual + test check)**: `Gemini 4 Neon (Medium)`
+
+> **Tip**: If a swarm worker hits quota mid-task, switch its model in place (`swarm model`) instead of killing it — it keeps its entire conversation context and resumes cleanly.
+
+---
+
+## 2. Milestone-by-Milestone Orchestration Plan
 
 ### Milestone 1 — Foundation, `DroidAmpSkin` Contract & Hardware UI Shell
 - **Recommended `agy` mode**: `/plan` (or `/boost` for deeper architectural verification).
 - **Why single-agent first**: Milestone 1 establishes the shared Kotlin interfaces (`DroidAmpSkin`, `PlaybackState`, `MusicSourceRepository`, `AudioEngineController`) and the core skeuomorphic Compose primitives that Milestones 2–4 build against.
 - **Suggested prompt**:
   > Follow `DESIGN.md` and `DECISIONS.md` to implement Milestone 1: add Media3/DataStore dependencies, define the `DroidAmpSkin` contract + shared repository/engine interfaces, build the `DroidAmp Classic` skeuomorphic Compose primitives, and wire the interactive Deck + curve-drawable 10-band EQ + full-screen expandable Playlist/Library sheet (with dummy preview data + first-run SAF empty state).
-- **Verification**: `./gradlew assembleDebug testDebugUnitTest` + `android-cli` emulator screenshot check (Section 3).
+- **Verification**: `./gradlew assembleDebug testDebugUnitTest` + `android-cli` emulator screenshot check (Section 4).
 
 ---
 
@@ -56,7 +87,7 @@ Once Milestone 1's shared interfaces are committed on `master`, Milestones 2, 3,
 
 ---
 
-## 2. Dynamic Python Workflows (`run_workflow`) for Fan-Out & Reviews
+## 3. Dynamic Python Workflows (`run_workflow`) for Fan-Out & Reviews
 
 Use `agy`'s `run_workflow` tool whenever orchestration is structured fan-out or a repeatable review pipeline:
 
@@ -72,7 +103,7 @@ Before committing/finishing a milestone, ask `agy` to run a parallel review work
 
 ---
 
-## 3. Visual QA Loop (`android-cli`)
+## 4. Visual QA Loop (`android-cli`)
 
 Because DroidAmp's identity relies on crisp late-1990s hardware bevels, legible pixel labels, and thumb-safe spacing, always close UI milestones with the `android-cli` loop:
 
