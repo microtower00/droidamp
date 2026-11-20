@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -35,6 +36,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.droidamp.player.domain.model.ClassicWinampPresets
 import com.droidamp.player.domain.model.EqPreset
@@ -404,53 +407,78 @@ private fun DrawScope.drawVerticalEqTrackAndThumb(
   height: Float,
 ) {
   val norm = ((WinampEqSpec.clampDb(db) - WinampEqSpec.MIN_DB) / 24f).coerceIn(0f, 1f)
-  val trackW = (width * 0.44f).coerceIn(8f, 14f)
+  val trackW = (width * 0.50f).coerceIn(10f, 18f)
   val trackLeft = left + (width - trackW) * 0.5f
   val padY = 4f
   val trackH = (height - padY * 2f).coerceAtLeast(16f)
 
-  // Recessed dark track slot
-  drawRect(
-    color = skin.vfd.wellBackground,
-    topLeft = Offset(trackLeft, padY),
-    size = Size(trackW, trackH),
-  )
+  val eqFrames = skin.sprites.eqSliderFrames
+  if (eqFrames.isNotEmpty()) {
+    val frameIdx = (norm * (eqFrames.size - 1)).roundToInt().coerceIn(0, eqFrames.lastIndex)
+    drawImage(
+      image = eqFrames[frameIdx],
+      dstOffset = IntOffset(trackLeft.roundToInt(), padY.roundToInt()),
+      dstSize = IntSize(trackW.roundToInt().coerceAtLeast(1), trackH.roundToInt().coerceAtLeast(1)),
+      filterQuality = FilterQuality.None,
+    )
+  } else {
+    // Recessed dark track slot
+    drawRect(
+      color = skin.vfd.wellBackground,
+      topLeft = Offset(trackLeft, padY),
+      size = Size(trackW, trackH),
+    )
 
-  // Classic Winamp intensity tint (bottom green -> mid yellow -> top orange/red)
-  val fillColor =
-    if (enabled) {
-      skin.visualizer.spectrumColorForLevel(norm).copy(alpha = 0.78f)
-    } else {
-      skin.vfd.phosphorDim.copy(alpha = 0.35f)
-    }
-  val fillH = (trackH - 2f) * norm
-  drawRect(
-    color = fillColor,
-    topLeft = Offset(trackLeft + 1f, padY + trackH - 1f - fillH),
-    size = Size((trackW - 2f).coerceAtLeast(2f), fillH.coerceAtLeast(1f)),
-  )
+    // Classic Winamp intensity tint (bottom green -> mid yellow -> top orange/red)
+    val fillColor =
+      if (enabled) {
+        skin.visualizer.spectrumColorForLevel(norm).copy(alpha = 0.78f)
+      } else {
+        skin.vfd.phosphorDim.copy(alpha = 0.35f)
+      }
+    val fillH = (trackH - 2f) * norm
+    drawRect(
+      color = fillColor,
+      topLeft = Offset(trackLeft + 1f, padY + trackH - 1f - fillH),
+      size = Size((trackW - 2f).coerceAtLeast(2f), fillH.coerceAtLeast(1f)),
+    )
 
-  // Recessed track outline
-  drawLine(skin.bevel.wellBorderDark, Offset(trackLeft, padY), Offset(trackLeft + trackW, padY), 1f)
-  drawLine(skin.bevel.wellBorderDark, Offset(trackLeft, padY), Offset(trackLeft, padY + trackH), 1f)
-  drawLine(
-    skin.bevel.wellBorderLight,
-    Offset(trackLeft, padY + trackH),
-    Offset(trackLeft + trackW, padY + trackH),
-    1f,
-  )
-  drawLine(
-    skin.bevel.wellBorderLight,
-    Offset(trackLeft + trackW, padY),
-    Offset(trackLeft + trackW, padY + trackH),
-    1f,
-  )
+    // Recessed track outline
+    drawLine(skin.bevel.wellBorderDark, Offset(trackLeft, padY), Offset(trackLeft + trackW, padY), 1f)
+    drawLine(skin.bevel.wellBorderDark, Offset(trackLeft, padY), Offset(trackLeft, padY + trackH), 1f)
+    drawLine(
+      skin.bevel.wellBorderLight,
+      Offset(trackLeft, padY + trackH),
+      Offset(trackLeft + trackW, padY + trackH),
+      1f,
+    )
+    drawLine(
+      skin.bevel.wellBorderLight,
+      Offset(trackLeft + trackW, padY),
+      Offset(trackLeft + trackW, padY + trackH),
+      1f,
+    )
+  }
 
-  // Chunky beveled fader cap (density-independent for crisp hardware proportions)
+  // Fader cap (aspect-preserving .wsz sprite if available, else chunky beveled cap)
   val capW = (width * 0.84f).coerceIn(10.dp.toPx(), 20.dp.toPx())
   val capH = 12.dp.toPx()
   val capLeft = left + (width - capW) * 0.5f
   val capTop = padY + (1f - norm) * (trackH - capH).coerceAtLeast(0f)
+
+  val eqThumbSprite = skin.sprites.eqThumb
+  if (eqThumbSprite != null) {
+    val thumbSide = minOf(capW, capH * 1.35f).roundToInt().coerceAtLeast(1)
+    val thumbX = (left + (width - thumbSide) * 0.5f).roundToInt()
+    val thumbY = (padY + (1f - norm) * (trackH - thumbSide).coerceAtLeast(0f)).roundToInt()
+    drawImage(
+      image = eqThumbSprite,
+      dstOffset = IntOffset(thumbX, thumbY),
+      dstSize = IntSize(thumbSide, thumbSide),
+      filterQuality = FilterQuality.None,
+    )
+    return
+  }
 
   drawRect(
     color = skin.bevel.sliderThumbFace,

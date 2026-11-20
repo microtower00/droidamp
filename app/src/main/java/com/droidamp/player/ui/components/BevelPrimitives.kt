@@ -1,5 +1,6 @@
 package com.droidamp.player.ui.components
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -31,6 +33,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -38,6 +41,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
@@ -178,6 +182,26 @@ fun ChassisTitleBar(
   trailingContent: @Composable (() -> Unit)? = null,
 ) {
   val skin = LocalDroidAmpSkin.current
+  val customTitleBar = skin.sprites.titleBarActive
+  if (customTitleBar != null && trailingContent == null && !showDragGrip) {
+    // Render custom `.wsz` titlebar.bmp directly with nearest-neighbor crispness (no text collision)
+    Canvas(
+      modifier =
+        modifier
+          .fillMaxWidth()
+          .height(22.dp)
+          .semantics { contentDescription = title },
+    ) {
+      drawImage(
+        image = customTitleBar,
+        dstOffset = IntOffset.Zero,
+        dstSize = IntSize(size.width.toInt().coerceAtLeast(1), size.height.toInt().coerceAtLeast(1)),
+        filterQuality = FilterQuality.None,
+      )
+    }
+    return
+  }
+
   Row(
     modifier =
       modifier
@@ -299,6 +323,38 @@ fun BeveledIconButton(
   val skin = LocalDroidAmpSkin.current
   val interactionSource = remember { MutableInteractionSource() }
   val isPressed by interactionSource.collectIsPressedAsState()
+  val spriteNormal = skin.sprites.transportNormal[icon]
+  val spritePressed = skin.sprites.transportPressed[icon] ?: spriteNormal
+
+  if (spriteNormal != null) {
+    val activeSprite = if (isPressed || highlighted) spritePressed else spriteNormal
+    Box(
+      modifier =
+        modifier
+          .background(skin.bevel.buttonFace)
+          .semantics { this.contentDescription = contentDescription }
+          .clickable(
+            enabled = enabled,
+            role = Role.Button,
+            interactionSource = interactionSource,
+            indication = null,
+            onClick = onClick,
+          ),
+      contentAlignment = Alignment.Center,
+    ) {
+      Canvas(modifier = Modifier.fillMaxSize()) {
+        val dstW = size.width.toInt().coerceAtLeast(1)
+        val dstH = size.height.toInt().coerceAtLeast(1)
+        drawImage(
+          image = activeSprite!!,
+          dstOffset = IntOffset.Zero,
+          dstSize = IntSize(dstW, dstH),
+          filterQuality = FilterQuality.None,
+        )
+      }
+    }
+    return
+  }
 
   Box(
     modifier =
