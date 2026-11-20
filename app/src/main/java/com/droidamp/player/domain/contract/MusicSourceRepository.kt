@@ -21,4 +21,10 @@ interface MusicSourceRepository {
   ): List<AudioTrack>
   suspend fun listPlaylists(): List<SavedPlaylistEntry>
   suspend fun resolvePlaylistTracks(playlistId: String): List<AudioTrack>
+
+  suspend fun saveM3u8Playlist(
+    fileName: String,
+    content: String,
+  ): Result<SavedPlaylistEntry> =
+    Result.failure(UnsupportedOperationException("saveM3u8Playlist not supported"))
 }
