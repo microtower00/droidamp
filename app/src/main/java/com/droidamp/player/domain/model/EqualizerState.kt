@@ -33,8 +33,47 @@ object ClassicWinampPresets {
   val FULL_BASS_TREBLE =
     EqPreset("FULL BASS & TREBLE", -1.0f, listOf(4.4f, 3.6f, 0f, -4.4f, -2.8f, 1.0f, 5.0f, 6.8f, 7.4f, 7.4f))
   val CLASSICAL = EqPreset("CLASSICAL", 0f, listOf(0f, 0f, 0f, 0f, 0f, 0f, -4.4f, -4.4f, -4.4f, -5.8f))
+  val CLUB = EqPreset("CLUB", 0f, listOf(0f, 0f, 4.8f, 3.4f, 3.4f, 3.4f, 2.0f, 0f, 0f, 0f))
+  val DANCE = EqPreset("DANCE", 0f, listOf(5.8f, 4.4f, 1.4f, 0f, 0f, -3.4f, -4.4f, -4.4f, 0f, 0f))
+  val FULL_BASS =
+    EqPreset("FULL BASS", -1.0f, listOf(5.8f, 5.8f, 5.8f, 3.4f, 1.0f, -2.4f, -4.8f, -6.2f, -6.8f, -6.8f))
+  val FULL_TREBLE =
+    EqPreset("FULL TREBLE", -1.0f, listOf(-5.8f, -5.8f, -5.8f, -2.4f, 1.4f, 6.8f, 9.6f, 9.6f, 9.6f, 10.2f))
+  val LAPTOP_SPEAKERS_HEADPHONES =
+    EqPreset(
+      "LAPTOP SPEAKERS / HEADPHONES",
+      0f,
+      listOf(2.8f, 6.8f, 3.4f, -2.0f, -1.4f, 1.0f, 2.8f, 5.8f, 7.6f, 8.6f),
+    )
+  val LARGE_HALL = EqPreset("LARGE HALL", 0f, listOf(6.2f, 6.2f, 3.4f, 3.4f, 0f, -2.8f, -2.8f, -2.8f, 0f, 0f))
+  val LIVE = EqPreset("LIVE", 0f, listOf(-2.8f, 0f, 2.4f, 3.4f, 3.4f, 3.4f, 2.4f, 1.4f, 1.4f, 1.4f))
+  val PARTY = EqPreset("PARTY", 0f, listOf(4.4f, 4.4f, 0f, 0f, 0f, 0f, 0f, 0f, 4.4f, 4.4f))
+  val REGGAE = EqPreset("REGGAE", 0f, listOf(0f, 0f, 0f, -3.4f, 0f, 3.8f, 3.8f, 0f, 0f, 0f))
+  val SKA = EqPreset("SKA", 0f, listOf(-1.4f, -2.8f, -2.4f, 0f, 2.4f, 3.4f, 5.4f, 5.8f, 6.8f, 5.8f))
+  val SOFT = EqPreset("SOFT", 0f, listOf(2.8f, 1.0f, 0f, -1.4f, 0f, 2.4f, 4.8f, 5.8f, 6.8f, 7.2f))
+  val SOFT_ROCK = EqPreset("SOFT ROCK", 0f, listOf(2.4f, 2.4f, 1.4f, 0f, -2.4f, -3.4f, -2.0f, 0f, 1.4f, 5.4f))
 
-  val ALL = listOf(FLAT, ROCK, POP, TECHNO, FULL_BASS_TREBLE, CLASSICAL)
+  val ALL =
+    listOf(
+      FLAT,
+      CLASSICAL,
+      CLUB,
+      DANCE,
+      FULL_BASS,
+      FULL_BASS_TREBLE,
+      FULL_TREBLE,
+      LAPTOP_SPEAKERS_HEADPHONES,
+      LARGE_HALL,
+      LIVE,
+      PARTY,
+      POP,
+      REGGAE,
+      ROCK,
+      SKA,
+      SOFT,
+      SOFT_ROCK,
+      TECHNO,
+    )
 }
 
 data class EqualizerState(

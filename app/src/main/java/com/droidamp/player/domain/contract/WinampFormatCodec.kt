@@ -35,4 +35,23 @@ interface PlaylistFileCodec {
   fun encodeM3u8(tracks: List<AudioTrack>): String
   fun parsePls(content: String): List<String>
   fun encodePls(tracks: List<AudioTrack>): String
+  fun resolveEntryPath(rawEntry: String, playlistFolderPath: String): String
+}
+
+data class AutoEqRule(
+  val pattern: String,
+  val preset: EqPreset,
+)
+
+interface Q2Codec {
+  fun parseAutoPresetsQ2(bytes: ByteArray): List<AutoEqRule>
+  fun encodeAutoPresetsQ2(rules: List<AutoEqRule>): ByteArray
+}
+
+interface AutoEqPresetResolver {
+  fun resolveForTrack(
+    track: AudioTrack,
+    rules: List<AutoEqRule>,
+    availablePresets: List<EqPreset>,
+  ): EqPreset?
 }
