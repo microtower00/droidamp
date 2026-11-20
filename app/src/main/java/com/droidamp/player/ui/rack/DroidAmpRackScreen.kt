@@ -51,6 +51,7 @@ import com.droidamp.player.ui.deck.MainDeckPanel
 import com.droidamp.player.ui.eq.EqualizerPanel
 import com.droidamp.player.ui.sheet.ExpandedPlaylistLibrarySheet
 import com.droidamp.player.ui.sheet.PeekingDrawerSurface
+import com.droidamp.player.ui.sheet.SavePlaylistDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -352,19 +353,7 @@ fun DroidAmpRackScreen(
           onReverseQueue = viewModel::reversePlaylist,
           onRandomizeQueue = viewModel::randomizePlaylist,
           onNewQueue = viewModel::requestClearQueue,
-          onSavePlaylist = {
-            viewModel.savePlaylistAsM3u8(
-              onNeedDocumentPickerFallback =
-                if (hasActivityResultOwner && createM3u8Launcher != null) {
-                  { fileName, content ->
-                    pendingM3u8Export = fileName to content
-                    createM3u8Launcher.launch(fileName)
-                  }
-                } else {
-                  null
-                },
-            )
-          },
+          onSavePlaylist = viewModel::openSavePlaylistDialog,
           onLoadPlaylist = viewModel::onLoadPlaylistShortcut,
           onOpenLibraryRoot = viewModel::openLibraryRoot,
           onOpenLibraryFolders = viewModel::openLibraryFolders,
@@ -409,6 +398,32 @@ fun DroidAmpRackScreen(
           modifier = Modifier.fillMaxWidth().height(peekHeightDp),
         )
       }
+    }
+
+    if (uiState.showSavePlaylistDialog) {
+      SavePlaylistDialog(
+        totalTrackCount = playbackState.queue.size,
+        totalDurationMs = playbackState.totalQueueDurationMs,
+        selectedTrackCount = uiState.selectedPlaylistIndices.size,
+        existingPlaylistNames = uiState.playlists.map { it.name }.toSet(),
+        onDismiss = viewModel::dismissSavePlaylistDialog,
+        onConfirmSave = { baseName, format, selectedOnly ->
+          viewModel.saveQueueAsPlaylist(
+            baseName = baseName,
+            format = format,
+            selectedOnly = selectedOnly,
+            onNeedDocumentPickerFallback =
+              if (hasActivityResultOwner && createM3u8Launcher != null) {
+                { fileName, content ->
+                  pendingM3u8Export = fileName to content
+                  createM3u8Launcher.launch(fileName)
+                }
+              } else {
+                null
+              },
+          )
+        },
+      )
     }
   }
 }

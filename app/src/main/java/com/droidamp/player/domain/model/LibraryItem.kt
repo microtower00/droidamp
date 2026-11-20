@@ -26,6 +26,11 @@ enum class RestingLayoutVariant {
   OPTION_B_TAB_PEEK,
 }
 
+enum class PlaylistExportFormat(val extension: String, val mimeType: String) {
+  M3U8(extension = "m3u8", mimeType = "audio/x-mpegurl"),
+  PLS(extension = "pls", mimeType = "audio/x-scpls"),
+}
+
 enum class PlaylistSortOrder {
   TITLE,
   FILENAME,

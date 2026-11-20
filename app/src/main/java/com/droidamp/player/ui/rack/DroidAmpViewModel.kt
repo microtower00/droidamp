@@ -14,6 +14,7 @@ import com.droidamp.player.domain.model.FolderEntry
 import com.droidamp.player.domain.model.LibraryTab
 import com.droidamp.player.domain.model.LibraryViewLevel
 import com.droidamp.player.domain.model.PlaybackState
+import com.droidamp.player.domain.model.PlaylistExportFormat
 import com.droidamp.player.domain.model.PlaylistSortOrder
 import com.droidamp.player.domain.model.RestingLayoutVariant
 import com.droidamp.player.domain.model.SavedPlaylistEntry
@@ -59,6 +60,7 @@ data class RackUiState(
   val queueFeedbackPulseCount: Int = 0,
   val autoEqFeedbackMessage: String? = null,
   val showClearQueueConfirm: Boolean = false,
+  val showSavePlaylistDialog: Boolean = false,
   val availableEqPresets: List<EqPreset> = ClassicWinampPresets.ALL,
 )
 
@@ -392,6 +394,92 @@ class DroidAmpViewModel(
   fun confirmClearQueue() {
     clearPlaylist()
     _uiState.update { it.copy(showClearQueueConfirm = false) }
+  }
+
+  fun openSavePlaylistDialog() {
+    if (playbackState.value.queue.isEmpty()) {
+      _uiState.update {
+        it.copy(
+          activeMicroMenu = PlaylistMicroMenu.NONE,
+          statusBanner = "QUEUE EMPTY — NOTHING TO SAVE",
+        )
+      }
+      return
+    }
+    _uiState.update {
+      it.copy(
+        activeMicroMenu = PlaylistMicroMenu.NONE,
+        showSavePlaylistDialog = true,
+      )
+    }
+  }
+
+  fun dismissSavePlaylistDialog() {
+    _uiState.update { it.copy(showSavePlaylistDialog = false) }
+  }
+
+  fun saveQueueAsPlaylist(
+    baseName: String,
+    format: PlaylistExportFormat = PlaylistExportFormat.M3U8,
+    selectedOnly: Boolean = false,
+    onNeedDocumentPickerFallback: ((fileName: String, content: String) -> Unit)? = null,
+  ) {
+    val queue = playbackState.value.queue
+    val selected = _uiState.value.selectedPlaylistIndices
+    val tracksToSave =
+      if (selectedOnly && selected.isNotEmpty()) {
+        queue.filterIndexed { idx, _ -> idx in selected }
+      } else {
+        queue
+      }
+    _uiState.update { it.copy(showSavePlaylistDialog = false, activeMicroMenu = PlaylistMicroMenu.NONE) }
+    if (tracksToSave.isEmpty()) return
+
+    val cleanBase =
+      baseName
+        .trim()
+        .removeSuffix(".m3u8")
+        .removeSuffix(".m3u")
+        .removeSuffix(".pls")
+        .replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        .trim()
+        .ifEmpty { "droidamp_playlist" }
+    val resolvedFileName = "$cleanBase.${format.extension}"
+
+    viewModelScope.launch {
+      val content =
+        when (format) {
+          PlaylistExportFormat.M3U8 -> playlistCodec.encodeM3u8(tracksToSave)
+          PlaylistExportFormat.PLS -> playlistCodec.encodePls(tracksToSave)
+        }
+      val result =
+        runCatching {
+          musicRepository.saveM3u8Playlist(resolvedFileName, content)
+        }.getOrElse { Result.failure(it) }
+
+      result
+        .onSuccess {
+          val refreshedPlaylists =
+            runCatching { musicRepository.listPlaylists() }.getOrDefault(_uiState.value.playlists)
+          _uiState.update {
+            it.copy(
+              playlists = refreshedPlaylists,
+              statusBanner = "SAVED ${resolvedFileName.uppercase()} (${tracksToSave.size} TRACKS)",
+            )
+          }
+        }
+        .onFailure { error ->
+          if (error is UnsupportedOperationException || onNeedDocumentPickerFallback == null) {
+            _uiState.update {
+              it.copy(
+                statusBanner = "SAVE FAILED: ${error.message?.take(40) ?: "STORAGE ERROR"}",
+              )
+            }
+          } else {
+            onNeedDocumentPickerFallback(resolvedFileName, content)
+          }
+        }
+    }
   }
 
   private fun showAutoEqFeedback(message: String) {

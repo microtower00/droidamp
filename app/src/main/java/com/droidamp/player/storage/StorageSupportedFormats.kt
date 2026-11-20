@@ -94,15 +94,17 @@ internal object StorageSupportedFormats {
         .trimStart { it.isWhitespace() }
 
     if (cleaned.isEmpty()) return null
+    val isPls = cleaned.endsWith(".pls", ignoreCase = true)
     val rawStem =
       when {
         cleaned.endsWith(".m3u8", ignoreCase = true) -> cleaned.dropLast(5)
         cleaned.endsWith(".m3u", ignoreCase = true) -> cleaned.dropLast(4)
-        cleaned.endsWith(".pls", ignoreCase = true) -> cleaned.dropLast(4)
+        isPls -> cleaned.dropLast(4)
         else -> cleaned
       }
     val stem = rawStem.trim { it.isWhitespace() || it == '.' }
-    return if (stem.isEmpty()) null else "$stem.m3u8"
+    val ext = if (isPls) "pls" else "m3u8"
+    return if (stem.isEmpty()) null else "$stem.$ext"
   }
 
   private val INVALID_FILE_NAME_CHARS = setOf('/', '\\', ':', '*', '?', '"', '<', '>', '|')

@@ -519,12 +519,18 @@ class SafMusicSourceRepository(
         roots.firstOrNull()
           ?: return@withContext Result.failure(IllegalStateException("No accessible SAF music folder linked"))
 
+      val resolvedMime =
+        if (sanitizedName.endsWith(".pls", ignoreCase = true)) {
+          "audio/x-scpls"
+        } else {
+          MIME_M3U8
+        }
       val writtenNode =
         gateway.writeTextFile(
           treeUriString = primaryRoot.treeUriString,
           directoryUriString = primaryRoot.rootDocUriString,
           fileName = sanitizedName,
-          mimeType = MIME_M3U8,
+          mimeType = resolvedMime,
           content = content,
         ) ?: return@withContext Result.failure(IOException("Failed to write SAF playlist $sanitizedName"))
 
@@ -544,7 +550,7 @@ class SafMusicSourceRepository(
           id = writtenNode.uriString,
           uriString = writtenNode.uriString,
           name = StorageSupportedFormats.playlistDisplayName(writtenNode.name),
-          format = "m3u8",
+          format = StorageSupportedFormats.playlistFormatFor(writtenNode.name),
           trackCount = resolvedTracks.size,
           totalDurationMs = resolvedTracks.sumOf { it.durationMs.coerceAtLeast(0L) },
         ),
