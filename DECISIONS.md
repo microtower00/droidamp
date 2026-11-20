@@ -197,3 +197,15 @@ This log records the key product, UX, and engineering decisions made during the 
   - **Stereo-Tower Camera Pan**: Replace the overlay sheet with a single continuous vertical stereo rack where `Main Deck` + `EQ` + live `QUEUE / LIBRARY` browser translate upward together 1:1 (eliminating mid-drag unmounting bugs, making both Queue and Library 100% live & scrollable in resting state, and matching the physical sensation of panning from the top to the bottom of a hi-fi stereo).
   - **Zero Layout Shift & Ergonomics**: Lock Library breadcrumb/LCD feedback row to fixed `32.dp` height, lock Queue track rows to fixed `38.dp` height, standardize inline `[▶]` and `[+]` buttons to identical `32×28dp` dimensions, and auto-focus + open the soft keyboard when activating `JUMP` filter.
 - **Rationale**: Directly resolves every visual jump, gesture interruption, and resting-state usability issue surfaced in User Testing #2.
+
+## ADR-024: Adaptive Status-Bar Scrim, 0ms Library Selection, Ping-Pong Marquee, Full-Bleed Prototype & Settings Spectrum
+- **Date**: 2026-11-20
+- **Status**: Accepted *(User Testing #3 on Pixel 11 Pro)*
+- **Decision**:
+  - **Adaptive Status-Bar Scrim**: Allow the panning Deck/EQ to glide visibly behind Android's status bar under a translucent light/dark-aware vertical scrim gradient so status icons stay legible.
+  - **1:1 Empty State & Mid-Pan Scroll Lock**: Top-anchor empty states so they rise 1:1 with the stereo tower, and intercept both scroll directions in `NestedScrollConnection.onPreScroll` whenever `0 < panOffset < maxPan` so reversing direction mid-drag never stalls.
+  - **Drop Double-Tap in `LIBRARY` Only**: Remove `combinedClickable` double-tap on `LIBRARY` rows for 0ms instant selection (relying on inline `[▶]` / `[+]`), while preserving classic Winamp double-tap in `QUEUE`.
+  - **Library Row Legibility**: Increase title-to-duration gutter to `12.dp`, dim unselected duration, and smoothly cycle long selected Library track titles forward/backward (ping-pong marquee).
+  - **Full-Bleed Option A Prototype (`UI:BAL` / `UI:FULL`)**: Test a full-bleed Deck + dynamic tall EQ variant alongside Balanced Rack using the same Stereo-Tower Pan.
+  - **Settings Roadmap (`SETTINGS_ROADMAP.md`)**: Document Milestone 6 Settings around the **Classic 1:1 Winamp Authenticity ↔ Mobile-Optimized Ergonomics** spectrum, including optional Hardware Volume Rocker ↔ Internal App Volume linking.
+- **Rationale**: Eliminates the last optical and kinesthetic rough edges in the stereo-tower pan and Library browser while organizing all backend M2–M4 + mobile ergonomics options into a clear Milestone 6 Settings blueprint.
