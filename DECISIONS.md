@@ -133,3 +133,58 @@ This log records the key product, UX, and engineering decisions made during the 
   - Register `MediaSession` via `addSession(createdSession)` in `DroidAmpPlaybackService.onCreate()` and delegate foreground promotion solely to Media3's `MediaNotificationManager` (avoiding manual `ContextCompat.startForegroundService()` calls that caused a foreground-service ANR on device).
   - Add `/The Doors - L.A. Woman.mp3` to `.gitignore` so the local verification fixture stays untracked.
 - **Rationale**: Keeps dependency count at zero beyond AndroidX/Media3, ensures MediaStore is ready behind the storage abstraction while SAF stays default, and guarantees ANR-free Android foreground media playback.
+
+## ADR-017: Copy Split — `QUEUE` (Active Playback) vs. `PLAYLISTS` (Saved Files)
+- **Date**: 2026-11-20
+- **Status**: Accepted *(User Testing #1 on Pixel 11 Pro)*
+- **Decision**:
+  - Rename the active playback list throughout the UI from `PLAYLIST` / `PL` to **`QUEUE`** (`DROIDAMP QUEUE`, Deck `QUEUE` toggle, bottom `[QUEUE (N)]` tab).
+  - Reserve **`PLAYLISTS`** exclusively for saved `.m3u` / `.m3u8` / `.pls` files inside `LIBRARY`.
+- **Rationale**: Eliminates terminology collision surfaced in User Testing #1 where users confused the live playback queue with saved `.m3u8`/`.pls` playlist files.
+
+## ADR-018: 1:1 Finger-Tracking Drawer Physics & Option A/B Resting Prototype
+- **Date**: 2026-11-20
+- **Status**: Accepted *(User Testing #1 + `/grill-me`)*
+- **Decision**:
+  - Replace threshold-only `AnimatedVisibility` sheet transitions with a continuous 1:1 finger-tracking vertical sheet (`Animatable` + velocity fling).
+  - Keep the collapsed peek surface **non-scrollable** so the entire peek area drags 1:1 with zero drag-vs-scroll conflict, and always reflect where the user left off (`QUEUE` vs. `LIBRARY`).
+  - When expanded, allow collapsing 1:1 by dragging down from the titlebar **or** pulling down at scroll-top.
+  - Prototype both **Option A (Slim Glance Lip)** and **Option B (2-Tab Glance Peek)** behind a temporary titlebar switch (`A/B`) for User Test #2, keeping **EQ open by default** in both.
+- **Rationale**: Restores physical skeuomorphic trust, eliminates the confusing snap-back to queue when closing from Library, and enables rapid real-device A/B validation.
+
+## ADR-019: Bottom Thumb-Zone `[QUEUE (N)] | [LIBRARY]` Tabs + Horizontal Swipe
+- **Date**: 2026-11-20
+- **Status**: Accepted *(`/grill-me`)*
+- **Decision**:
+  - Place the primary **`[QUEUE (N)]` | `[LIBRARY]`** tab switcher in the **bottom thumb zone** of the expanded drawer and wire `HorizontalPager` so swiping left/right switches pages.
+  - Stack the expanded drawer bottom chrome top-to-bottom above `navigationBarsPadding()` + bottom lip as: **(1) Context Actions** → **(2) `[QUEUE (N)] | [LIBRARY]` tabs** → **(3) Compact Micro-transport bar**.
+  - Rename the Deck's 4th LED toggle to **`QUEUE`** (opens drawer to `QUEUE`), while **`⏏`** opens directly to `LIBRARY`.
+- **Rationale**: Optimizes one-handed reachability on tall modern phones while removing redundant `[LIB]`/`[PL]` buttons from the action bars.
+
+## ADR-020: iPod-Style Library Root, Android Back Step-Up, Contextual Selection & In-Drawer Feedback
+- **Date**: 2026-11-20
+- **Status**: Accepted *(User Testing #1 + `/grill-me`)*
+- **Decision**:
+  - Replace nested double tab bars with an **iPod-style `LIBRARY` root** (`> [DIR] FOLDERS`, `> [LST] PLAYLISTS`) that remembers the user's last drill-down location.
+  - Pressing Android **Back** inside `LIBRARY` steps **up one level** before collapsing the drawer at `LIBRARY` root (or anywhere in `QUEUE`).
+  - Hide/disable Library's bottom selection bar when 0 items are selected; show `[▶ PLAY (N)] [+ QUEUE (N)] [✕]` contextually when 1+ items are selected.
+  - Keep strict Winamp single-track `[▶]` / double-tap replace-play (switching to `QUEUE`); keep `+` in `LIBRARY` with 3 in-drawer feedback cues (bottom `[QUEUE (N)]` tab counter flash, 2s breadcrumb confirmation, `[Q×N]` track row badge + haptic tick).
+  - Add a retro confirmation dialog on `QUEUE → [REM] → CLEAR QUEUE` (no extra LCD bar in Queue) and a retro VFD `Save Queue as Playlist` naming dialog (`.m3u8` / `.pls`) from `QUEUE → [LIST] → SAVE AS PLAYLIST...`.
+- **Rationale**: Prevents accidental bulk-folder queuing, prevents duplicate `+` taps when the Deck VFD is covered, and delivers a clean Winamp-faithful queue/playlist creation loop.
+
+## ADR-021: Carved Hardware Glyphs, Taller 60/40 Sliders, EQ Back-Gesture Exclusion & Smooth Visualizer
+- **Date**: 2026-11-20
+- **Status**: Accepted *(User Testing #1 + `/grill-me`)*
+- **Decision**:
+  - Replace Unicode text transport & VFD status glyphs with pixel-aligned Canvas hardware glyphs routed through `DroidAmpSkin`.
+  - Keep Winamp's classic 60/40 side-by-side `VOL` + `BAL` layout with taller 24–26dp slider tracks/thumbs.
+  - Apply `Modifier.systemGestureExclusion()` + horizontal bezel padding to the EQ slider bank and add transient VFD self-narration for `AUTO` EQ toggle/matches.
+  - Upgrade `LockFreeAudioRingBuffer` + `VisualizerTapProcessor` to a cursor-tracked playback window so the VFD waveform/spectrum updates smoothly at 60–120fps across ExoPlayer decode bursts.
+- **Rationale**: Directly resolves every hardware-fidelity and gesture ergonomics defect reported on Pixel 11 Pro.
+
+## ADR-022: OG Winamp `.wsz` Skin Component Reuse Goal (Deferred to Milestone 5)
+- **Date**: 2026-11-20
+- **Status**: Logged *(Milestone 5 requirement)*
+- **Decision**:
+  - Users should be able to load real classic Winamp 2.x `.wsz` archives and reuse most of their visual components (sprites, `pledit.txt`, `viscolor.txt`, chassis/slider assets), accepting light mobile layout adaptation where needed.
+- **Rationale**: Logged early so all UX v2 changes keep `DroidAmpSkin` contracts and classic proportions `.wsz`-compatible without prematurely implementing Milestone 5.

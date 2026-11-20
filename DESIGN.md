@@ -31,49 +31,38 @@ Every UI component renders through an abstract `DroidAmpSkin` interface (never h
 
 ## 2. Screen Layout & Interaction Model
 
-### Resting State (Hi-Fi Rack View)
-Stacked vertically from top to bottom with zero wasted space:
-1. **Main Deck (top)**:
-   - Winamp-style titlebar (`DROIDAMP`) with window controls.
-   - Recessed pitch-black VFD well: 7-segment elapsed/remaining clock (tap to toggle), live 60fps FFT Spectrum Analyzer / Oscilloscope (tap to cycle Spectrum → Oscilloscope → Off), scrolling marquee title, `kbps` / `kHz` / `MONO|STEREO` indicators.
-   - Independent internal **Volume** (`0..255`, reset to a familiar default such as ~80% **only on fresh cold launch when playback is stopped**, never on resume while audio is playing) and **Balance** (`-127..+127`) sliders.
-   - Scrubbable **Position Seekbar**.
-   - Classic transport bar (`|<`, `▶`, `||`, `■`, `>|`, `⏏`) + `SHUFFLE` / `REPEAT` / `EQ` / `PL` LED toggle buttons.
-2. **10-Band Graphic Equalizer (middle)**:
-   - Docked directly beneath the Deck (collapsible via the Deck's `EQ` button).
-   - `ON` and `AUTO` LED toggles + `PRESETS` button + live EQ response spline curve.
-   - `PREAMP` separated by a clear physical gap from the classic Winamp 10 frequency bands: **60Hz, 170Hz, 310Hz, 600Hz, 1kHz, 3kHz, 6kHz, 12kHz, 14kHz, 16kHz** (-12dB to +12dB).
-   - **Touch Ergonomics**: Supports **EQ curve drawing** (dragging horizontally across the 10-band bank smoothly paints the curve without clipping `PREAMP`), vertical single-band fine-tuning, and a transient VFD value readout (e.g., `3KHZ +4.5DB`) while dragging so the thumb never occludes the value.
-3. **Peeking Playlist / Library Sheet (bottom)**:
-   - Separated from the EQ bottom by a dedicated **non-interactive bezel buffer + tactile pull-up handle** so upward swipes never accidentally drag an EQ slider.
-   - Displays the sheet titlebar + peeking top rows at the bottom of the resting view.
-   - **Expand to full-screen**: Tap the peeking panel, drag it upward, press `PL` (reopens last mode), or press **`⏏` Eject** (jumps straight to `LIBRARY`).
-   - **Sheet Memory**: Remembers whether the user was last in `PLAYLIST` or `LIBRARY` when collapsed and reopened.
+### Two-Plane Architecture
+1. **Top Plane — The Instrument (Main Deck + Collapsible 10-Band EQ, open by default)**:
+   - **Main Deck**:
+     - Winamp-style titlebar (`DROIDAMP`) with window controls.
+     - Recessed pitch-black VFD well: carved pixel/vector Play/Pause/Stop status glyph + 7-segment elapsed/remaining clock (tap to toggle), live 60–120fps audio-synced FFT Spectrum Analyzer / Oscilloscope (tap to cycle Spectrum → Oscilloscope → Off), scrolling marquee title, `kbps` / `kHz` / `MONO|STEREO` indicators.
+     - Independent internal **Volume** (`0..255`, reset to ~80% **only on fresh cold launch when playback is stopped**) and **Balance** (`-127..+127`) sliders in classic 60/40 side-by-side layout with taller 24–26dp touch targets.
+     - Scrubbable **Position Seekbar**.
+     - Classic carved-glyph transport bar (`|<`, `▶`, `❚❚`, `■`, `>|`, `⏏`) + `SHUFFLE` / `REPEAT` / `EQ` / `QUEUE` LED toggle buttons (`QUEUE` opens drawer to `QUEUE`; `⏏` opens drawer directly to `LIBRARY`).
+   - **10-Band Graphic Equalizer**:
+     - Docked directly beneath the Deck (open by default, collapsible via `EQ`).
+     - `ON` and `AUTO` LED toggles + `PRESETS` button + live EQ response spline curve with transient VFD self-narration on drag or `AUTO` EQ toggle/match (e.g., `AUTO EQ: ROCK`, `3KHZ +4.5DB`).
+     - `PREAMP` separated by a clear physical gap from the 10 frequency bands (**60Hz–16kHz**, -12dB to +12dB).
+     - **Touch & Gesture Ergonomics**: Supports **EQ curve drawing** horizontally across the 10-band bank, wrapped in Android `systemGestureExclusion()` + horizontal bezel padding so edge drags never trigger Android Back.
+2. **Bottom Plane — 1:1 Finger-Tracking Drawer (`QUEUE` & `LIBRARY`)**:
+   - Separated from the EQ bottom by a dedicated **non-interactive bezel buffer**.
+   - **Collapsed (Peeking) State**: Non-scrollable glance surface that tracks the finger 1:1 vertically when dragged up (zero drag-vs-scroll conflict) and always reflects where the user left off (`QUEUE` vs. `LIBRARY`). *(A/B prototype supports Option A Slim Glance Lip and Option B 2-Tab Glance Peek.)*
+   - **Expanded (Full-Screen) State**: Covers Deck & EQ; dragging down from the header **or** pulling down at scroll-top collapses 1:1.
+   - **Navigation & Thumb-Zone Bottom Stack** (ordered top → bottom above `navigationBarsPadding()` + bottom lip):
+     1. **Context Actions**:
+        - **`QUEUE` mode (3 buttons)**: `[REM]` · `[MISC]` · `[LIST]` (strict Winamp menus, retro confirmation dialog on `CLEAR QUEUE`, and `SAVE AS PLAYLIST...` naming dialog for `.m3u8` / `.pls`).
+        - **`LIBRARY` mode**: Hidden when 0 items are selected; appears when 1+ items are selected (`[▶ PLAY (N)]` · `[+ QUEUE (N)]` · `[✕]`). Whole-folder play/queue lives on folder rows & the breadcrumb header.
+     2. **Primary Tabs**: **`[QUEUE (N)]`** \| **`[LIBRARY]`** (also switchable via horizontal swipe between pages).
+     3. **Bottom transport micro-bar**: Compact carved-glyph `|< ▶ ❚❚ ■ >|` + `elapsed / total` time counter (no duplicate `⏏`).
 
-### Expanded State (Full-Screen Playlist / Library Sheet)
-- Covers both Deck and EQ, giving full vertical space to track/folder browsing.
-- **Top Chrome**:
-  - Distinct Winamp titlebar (`DROIDAMP PLAYLIST` vs. `DROIDAMP LIBRARY`) — swipe down from titlebar, drag down, or press Android **Back** to return smoothly to the resting Deck + EQ rack.
-  - In `LIBRARY` mode, immediately beneath the titlebar: top-level switcher **`[FOLDERS]` | `[PLAYLISTS]`** + current folder breadcrumb strip (e.g., `MUSIC / DAFT PUNK / DISCOVERY`) for instant mode recognition.
-- **Mode-Specific Trimmed Bottom Chrome (Zero Dead Buttons)**:
-  - **`PLAYLIST` mode (4 beveled buttons)**: `[LIB]` · `[REM]` · `[MISC]` · `[LIST]` (no redundant `[+ADD]`). Tapping `REM`, `MISC`, or `LIST` pops up classic Winamp-style stacked retro micro-menus directly above the button (`REM`: Remove Selected / Crop / Clear; `MISC`: Sort / Reverse / Randomize / Jump-Filter; `LIST`: Save / Load / New), alongside drag-to-reorder on track rows.
-  - **`LIBRARY` mode (3 beveled buttons)**: `[PL]` · `[▶ PLAY]` · `[+ QUEUE]` (acting on selected items or current folder).
-  - **Bottom transport micro-bar**: Compact `|< ▶ || ■ >|` + `elapsed / total` time counter (no duplicate `⏏` button).
-  - **Android Gesture Safety**: Strictly inset above `navigationBarsPadding()` with a non-interactive chassis bottom bezel lip so bottom controls never collide with Android's Home/Recents gesture pill.
-
-### Library View (`LIBRARY`) & Winamp-Faithful Select-First Interaction
-- **Inside `[FOLDERS]`**:
-  - Displays parent navigation (`../`), subfolders, and individual audio tracks in the current directory.
-  - **Folder row**:
-    - **Single-tap**: Explore into folder (view subfolders & tracks).
-    - **Inline beveled `[▶]`**: Replace active playlist with folder's tracks and start playing.
-    - **Inline beveled `[+]`**: Enqueue folder's tracks at the end of the active playlist.
-  - **Single Track row (Winamp-faithful + touch-safe)**:
-    - **Single-tap**: **Select / highlight** the track (safe while scrolling; supports multi-select without accidentally nuking the active queue).
-    - **Double-tap or `[▶]`**: Replace active playlist with selected track(s) and start playing (strict Winamp behavior).
-    - **Inline `[+]` / `[+ QUEUE]`**: Enqueue selected track(s) into the active playlist without interrupting playback.
-- **Inside `[PLAYLISTS]`**:
-  - Lists `.m3u` / `.m3u8` / `.pls` files discovered in storage or saved internally, with tap to inspect/select, `[▶]` to load & play, `[+]` to enqueue.
+### Library View (`LIBRARY`) — iPod-Style Hierarchy & Select-First Safety
+- **iPod-Style Root Menu**: Top-level choices **`> [DIR] FOLDERS`** and **`> [LST] PLAYLISTS`** with last-location memory. Android **Back** steps up one level (`DOORS` → `FOLDERS` → `LIBRARY` root), then collapses the drawer at root (or anywhere in `QUEUE`).
+- **Inside `FOLDERS`**:
+  - Breadcrumb header (`LIBRARY / FOLDERS / ...`) + parent `[..]`, subfolders, and audio tracks.
+  - **Folder row**: Single-tap explores; inline `[▶]` replace-plays & switches to `QUEUE`; inline `[+]` enqueues & stays in `LIBRARY`.
+  - **Track row**: Single-tap **selects** (multi-select safe); double-tap or `[▶]` **strict Winamp single-track replace-play** & switches to `QUEUE`; inline `[+]` enqueues & stays in `LIBRARY` with 3 in-drawer feedback cues (bottom `[QUEUE (N)]` tab counter flash, 2s breadcrumb confirmation, `[Q×N]` row badge + haptic tick).
+- **Inside `PLAYLISTS`**:
+  - Lists `.m3u` / `.m3u8` / `.pls` files discovered in storage or saved via `QUEUE → [LIST] → SAVE AS PLAYLIST...`, with tap to select, `[▶]` to load & play, `[+]` to enqueue.
 
 ### First-Run Onboarding (Empty State)
 - On cold start before any folder is linked, the recessed VFD/Playlist well displays a simple late-90s hardware empty state (`NO MUSIC FOLDER LINKED`, one-line hint reminding the user to select their Music folder rather than Android storage root, and a single beveled **`[ SELECT MUSIC FOLDER ]`** button triggering SAF `ACTION_OPEN_DOCUMENT_TREE`).
