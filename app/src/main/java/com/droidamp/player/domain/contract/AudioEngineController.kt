@@ -1,15 +1,23 @@
 package com.droidamp.player.domain.contract
 
 import com.droidamp.player.domain.model.AudioTrack
+import com.droidamp.player.domain.model.DspSettings
 import com.droidamp.player.domain.model.EqPreset
 import com.droidamp.player.domain.model.PlaybackState
 import com.droidamp.player.domain.model.PlaylistSortOrder
 import com.droidamp.player.domain.model.VisualizerFrame
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+private val DefaultDspSettingsFlow: StateFlow<DspSettings> =
+  MutableStateFlow(DspSettings()).asStateFlow()
 
 interface AudioEngineController {
   val playbackState: StateFlow<PlaybackState>
   val visualizerFrame: StateFlow<VisualizerFrame>
+  val dspSettings: StateFlow<DspSettings>
+    get() = DefaultDspSettingsFlow
 
   fun play()
   fun pause()
@@ -46,4 +54,14 @@ interface AudioEngineController {
   fun cycleRepeatMode()
   fun toggleTimeDisplayMode()
   fun cycleVisualizerMode()
+
+  fun setDspSettings(settings: DspSettings) {}
+
+  fun setReplayGainMetadata(
+    trackId: String,
+    trackGainDb: Float?,
+    trackPeak: Float?,
+    albumGainDb: Float?,
+    albumPeak: Float?,
+  ) {}
 }
