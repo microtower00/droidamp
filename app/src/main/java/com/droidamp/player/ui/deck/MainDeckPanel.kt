@@ -27,7 +27,6 @@ import com.droidamp.player.domain.model.RepeatMode
 import com.droidamp.player.domain.model.VisualizerFrame
 import com.droidamp.player.domain.model.formatWinampDuration
 import com.droidamp.player.skin.LocalDroidAmpSkin
-import com.droidamp.player.ui.components.BeveledButton
 import com.droidamp.player.ui.components.BeveledIconButton
 import com.droidamp.player.ui.components.BeveledLedToggleButton
 import com.droidamp.player.ui.components.ChassisTitleBar
@@ -112,9 +111,6 @@ fun MainDeckPanel(
   onToggleEqVisible: () -> Unit,
   onTogglePlaylistSheet: () -> Unit,
   modifier: Modifier = Modifier,
-  spaciousMode: Boolean = false,
-  layoutVariantLabel: String? = null,
-  onToggleLayoutVariant: (() -> Unit)? = null,
 ) {
   val skin = LocalDroidAmpSkin.current
   var transientMarqueeOverride by remember { mutableStateOf<String?>(null) }
@@ -127,7 +123,7 @@ fun MainDeckPanel(
       val idx = (playbackState.currentIndex + 1).coerceAtLeast(1)
       "$idx. ${track.displayLabel} (${formatWinampDuration(track.durationMs)})  ***  "
     } else {
-      "DROIDAMP v1.0  —  NO TRACK LOADED  ***  "
+      "DROIDAMP v0.1.0-alpha.1  —  NO TRACK LOADED  ***  "
     }
 
   val durationMs = playbackState.durationMs.coerceAtLeast(1L)
@@ -138,32 +134,17 @@ fun MainDeckPanel(
       (playbackState.positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
     }
 
-  val visualizerHeight = if (spaciousMode) 64.dp else 36.dp
-  val transportHeight = if (spaciousMode) 44.dp else 36.dp
-  val sliderHeight = if (spaciousMode) 28.dp else 24.dp
+  val visualizerHeight = 36.dp
+  val transportHeight = 36.dp
+  val sliderHeight = 24.dp
 
   HardwarePanel(modifier = modifier.fillMaxWidth()) {
     Column(modifier = Modifier.fillMaxWidth()) {
-      ChassisTitleBar(
-        title = "DROIDAMP",
-        trailingContent =
-          if (layoutVariantLabel != null && onToggleLayoutVariant != null) {
-            {
-              BeveledButton(
-                label = layoutVariantLabel,
-                onClick = onToggleLayoutVariant,
-                modifier = Modifier.height(18.dp),
-                contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp),
-              )
-            }
-          } else {
-            null
-          },
-      )
+      ChassisTitleBar(title = "DROIDAMP")
 
       Column(
         modifier = Modifier.fillMaxWidth().padding(skin.metrics.panelPadding),
-        verticalArrangement = Arrangement.spacedBy(if (spaciousMode) 7.dp else 5.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
       ) {
         // Row 1: Recessed VFD Clock + Visualizer (left) & Marquee + Bitrate/kHz/Stereo (right)
         Row(
@@ -349,7 +330,7 @@ fun MainDeckPanel(
             transientMarqueeOverride = null
           },
           trackStyle = SliderTrackStyle.SEEKBAR,
-          height = if (spaciousMode) 24.dp else 22.dp,
+          height = 22.dp,
           thumbWidth = 24.dp,
         )
 

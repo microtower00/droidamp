@@ -21,11 +21,6 @@ enum class LibraryViewLevel {
   PLAYLISTS,
 }
 
-enum class RestingLayoutVariant {
-  OPTION_A_SLIM_LIP,
-  OPTION_B_TAB_PEEK,
-}
-
 enum class PlaylistExportFormat(val extension: String, val mimeType: String) {
   M3U8(extension = "m3u8", mimeType = "audio/x-mpegurl"),
   PLS(extension = "pls", mimeType = "audio/x-scpls"),

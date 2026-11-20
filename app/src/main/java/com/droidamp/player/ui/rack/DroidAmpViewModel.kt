@@ -16,7 +16,6 @@ import com.droidamp.player.domain.model.LibraryViewLevel
 import com.droidamp.player.domain.model.PlaybackState
 import com.droidamp.player.domain.model.PlaylistExportFormat
 import com.droidamp.player.domain.model.PlaylistSortOrder
-import com.droidamp.player.domain.model.RestingLayoutVariant
 import com.droidamp.player.domain.model.SavedPlaylistEntry
 import com.droidamp.player.domain.model.SheetMode
 import com.droidamp.player.domain.model.StorageBackend
@@ -46,7 +45,6 @@ data class RackUiState(
   val sheetMode: SheetMode = SheetMode.PLAYLIST,
   val libraryTab: LibraryTab = LibraryTab.FOLDERS,
   val libraryViewLevel: LibraryViewLevel = LibraryViewLevel.ROOT,
-  val restingLayoutVariant: RestingLayoutVariant = RestingLayoutVariant.OPTION_B_TAB_PEEK,
   val folderContents: FolderContents = FolderContents.EMPTY,
   val playlists: List<SavedPlaylistEntry> = emptyList(),
   val selectedPlaylistIndices: Set<Int> = emptySet(),
@@ -259,18 +257,6 @@ class DroidAmpViewModel(
 
   fun toggleEqVisible() {
     _uiState.update { it.copy(isEqVisible = !it.isEqVisible) }
-  }
-
-  fun toggleRestingLayoutVariant() {
-    _uiState.update {
-      val next =
-        if (it.restingLayoutVariant == RestingLayoutVariant.OPTION_A_SLIM_LIP) {
-          RestingLayoutVariant.OPTION_B_TAB_PEEK
-        } else {
-          RestingLayoutVariant.OPTION_A_SLIM_LIP
-        }
-      it.copy(restingLayoutVariant = next)
-    }
   }
 
   fun expandSheetRememberedMode() {

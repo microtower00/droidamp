@@ -4,7 +4,6 @@ import com.droidamp.player.audio.dsp.LockFreeAudioRingBuffer
 import com.droidamp.player.audio.dsp.VisualizerTapProcessor
 import com.droidamp.player.domain.model.LibraryViewLevel
 import com.droidamp.player.domain.model.PlaylistExportFormat
-import com.droidamp.player.domain.model.RestingLayoutVariant
 import com.droidamp.player.domain.model.SheetMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -107,16 +106,11 @@ class UxV2InteractionTest {
   }
 
   @Test
-  fun clearQueueConfirmAndOptionABToggleAndSavePlaylistDialogWork() = runTest(testDispatcher) {
+  fun clearQueueConfirmAndSavePlaylistDialogWork() = runTest(testDispatcher) {
     val repo = FakeMusicSourceRepository(startLinked = true)
     val engine = FakeAudioEngineController(backgroundScope, enableSimulationTicker = false)
     val vm = DroidAmpViewModel(engine, repo)
     advanceUntilIdle()
-
-    // Balanced <-> Full-Bleed toggle
-    assertEquals(RestingLayoutVariant.OPTION_B_TAB_PEEK, vm.uiState.value.restingLayoutVariant)
-    vm.toggleRestingLayoutVariant()
-    assertEquals(RestingLayoutVariant.OPTION_A_SLIM_LIP, vm.uiState.value.restingLayoutVariant)
 
     // Seed queue with 1 track
     val firstFolder = vm.uiState.value.folderContents.folders.first()

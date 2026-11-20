@@ -8,8 +8,8 @@
 
 | Preset | Philosophy | What It Sets |
 | :--- | :--- | :--- |
-| **Classic Winamp (1:1)** | Maximum late-1990s fidelity | Independent internal volume (`0..255`), cold-launch volume reset (`204`), Balanced Rack, Classic `.wsz` Deck proportions when skin loaded, ReplayGain OFF, Crossfade OFF. |
-| **Mobile-Optimized** | Best one-handed phone ergonomics | Hardware Volume Rocker linked to internal app volume, preserve last volume across launches, Full-Bleed Deck+EQ option, Adaptive status-bar scrim, Adaptive `.wsz` skin layout. |
+| **Classic Winamp (1:1)** | Maximum late-1990s fidelity | Independent internal volume (`0..255`), cold-launch volume reset (`204`), Classic `.wsz` Deck proportions when skin loaded, ReplayGain OFF, Crossfade OFF. |
+| **Mobile-Optimized** | Best one-handed phone ergonomics | Hardware Volume Rocker linked to internal app volume, preserve last volume across launches, Adaptive status-bar scrim, Adaptive `.wsz` skin layout. |
 
 ---
 
@@ -30,7 +30,6 @@
 
 | Setting | Options | Default | Backend Status | Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| **Rack Layout Density** | `Balanced Rack` \| `Full-Bleed Deck + EQ` | `Balanced` | Prototyped (UX Round 4) | `Balanced` shows live scrollable Queue/Library below EQ; `Full-Bleed` expands Deck + tall EQ to fill ~84% of resting viewport. |
 | **Winamp Skins (`.wsz`)** | Built-in `DroidAmp Classic` + imported `.wsz` archives | `DroidAmp Classic` | Contract ready (`DroidAmpSkin`); parser in **Milestone 5** | Supports *Adaptive Mobile Mode* and optional *Classic 275×116 Deck Mode* for heavily illustrated OG Winamp skins (ADR-022). |
 | **Status Bar Treatment** | `Adaptive Scrim Gradient` \| `Solid Hardware Bezel` | `Adaptive Scrim` | Implemented (UX Round 4) | Adaptive light/dark translucent scrim as EQ pans behind status bar vs. crisp clip below status bar. |
 | **Visualizer Mode & Style** | `Spectrum` \| `Oscilloscope` \| `Off` | `Spectrum` | Wired (`VisualizerTapProcessor`) | Also cycleable directly by tapping the VFD well. |
