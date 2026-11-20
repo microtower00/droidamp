@@ -76,6 +76,7 @@ fun UnifiedQueueLibraryPanel(
   onDragDelta: (Float) -> Unit,
   onDragFinished: (Float) -> Unit,
   canPullDownToCollapse: () -> Boolean,
+  isMidPan: () -> Boolean,
   onSelectMusicFolder: () -> Unit,
   onSwitchSheetMode: (SheetMode) -> Unit,
   onPlaylistTrackClick: (Int) -> Unit,
@@ -162,17 +163,34 @@ fun UnifiedQueueLibraryPanel(
       }
     }
 
-  // Pull-down at scroll-top when expanded pans the stereo tower smoothly back to Deck + EQ
+  // Pull-down at scroll-top + mid-pan direction-reversal lock (ADR-024)
   val pullDownNestedScroll =
     remember {
       var dragAccum = 0f
+      var activeNestedPan = false
       object : NestedScrollConnection {
+        override fun onPreScroll(
+          available: Offset,
+          source: NestedScrollSource,
+        ): Offset {
+          // If the stereo tower is mid-pan, keep BOTH up & down deltas locked to the pan
+          // so reversing direction mid-gesture never freezes the tower or scrolls the inner list.
+          if (source == NestedScrollSource.UserInput && isMidPan() && available.y != 0f) {
+            activeNestedPan = true
+            dragAccum += available.y
+            onDragDelta(available.y)
+            return Offset(0f, available.y)
+          }
+          return Offset.Zero
+        }
+
         override fun onPostScroll(
           consumed: Offset,
           available: Offset,
           source: NestedScrollSource,
         ): Offset {
           if (source == NestedScrollSource.UserInput && available.y > 0f && canPullDownToCollapse()) {
+            activeNestedPan = true
             dragAccum += available.y
             onDragDelta(available.y)
             return Offset(0f, available.y)
@@ -184,9 +202,10 @@ fun UnifiedQueueLibraryPanel(
           consumed: Velocity,
           available: Velocity,
         ): Velocity {
-          if (dragAccum > 0f) {
+          if (activeNestedPan) {
             val total = dragAccum
             dragAccum = 0f
+            activeNestedPan = false
             onDragFinished(total)
           }
           return Velocity.Zero

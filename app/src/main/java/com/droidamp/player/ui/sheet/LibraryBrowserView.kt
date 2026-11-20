@@ -1,9 +1,10 @@
 package com.droidamp.player.ui.sheet
 
-import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,14 +19,18 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import com.droidamp.player.domain.model.AudioTrack
 import com.droidamp.player.domain.model.FolderContents
 import com.droidamp.player.domain.model.FolderEntry
@@ -44,7 +49,6 @@ import com.droidamp.player.ui.components.RecessedWell
  *   `[+]` enqueues & stays in LIBRARY with haptic tick, `[Q×N]` row badge, and transient breadcrumb confirmation.
  * - Bottom contextual action bar (`[▶ PLAY (N)]`, `[+ QUEUE (N)]`, `[✕]`) appears ONLY when 1+ items are selected.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LibraryBrowserView(
   hasLinkedRoots: Boolean,
@@ -292,7 +296,7 @@ fun LibraryBrowserView(
                 }
               }
 
-              // Track rows: single-tap = SELECT (safe); double-tap / [▶] = strict Winamp single-track play; [+] = enqueue
+              // Track rows: 0ms instant single-tap select (double-tap dropped per ADR-024); inline [▶] plays; [+] enqueues
               items(items = folderContents.tracks, key = { "trk-${it.id}" }) { track ->
                 val isSelected = track.id in selectedTrackIds
                 val inQueueCount = queueCountByTrackId[track.id] ?: 0
@@ -300,42 +304,39 @@ fun LibraryBrowserView(
                   if (isSelected) skin.playlist.selectedBackground else skin.playlist.normalBackground
                 val rowFg =
                   if (isSelected) skin.playlist.selectedText else skin.playlist.normalText
+                val durationFg =
+                  if (isSelected) rowFg.copy(alpha = 0.85f) else skin.vfd.phosphorDim
 
                 Row(
                   modifier =
                     Modifier
                       .fillMaxWidth()
                       .background(rowBg)
-                      .combinedClickable(
-                        onClick = { onToggleTrackSelection(track) },
-                        onDoubleClick = { onPlayTrack(track) },
-                      )
+                      .clickable { onToggleTrackSelection(track) }
                       .padding(horizontal = 6.dp, vertical = 6.dp),
                   verticalAlignment = Alignment.CenterVertically,
                 ) {
-                  Text(
+                  PingPongSelectableTrackTitle(
                     text = track.displayLabel,
-                    style = skin.typography.trackRow,
+                    isSelected = isSelected,
                     color = rowFg,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                   )
                   if (inQueueCount > 0) {
-                    Spacer(Modifier.width(4.dp))
+                    Spacer(Modifier.width(6.dp))
                     Text(
                       text = if (inQueueCount == 1) "[Q]" else "[Q×$inQueueCount]",
                       style = skin.typography.microLabel,
                       color = if (isSelected) rowFg else skin.vfd.phosphorPrimary,
                     )
                   }
-                  Spacer(Modifier.width(5.dp))
+                  Spacer(Modifier.width(12.dp))
                   Text(
                     text = formatWinampDuration(track.durationMs),
                     style = skin.typography.microLabel,
-                    color = rowFg,
+                    color = durationFg,
                   )
-                  Spacer(Modifier.width(6.dp))
+                  Spacer(Modifier.width(8.dp))
                   BeveledButton(
                     label = "▶",
                     onClick = { onPlayTrack(track) },
@@ -416,10 +417,7 @@ fun LibraryBrowserView(
                       Modifier
                         .fillMaxWidth()
                         .background(rowBg)
-                        .combinedClickable(
-                          onClick = { onSelectPlaylist(pl) },
-                          onDoubleClick = { onPlayPlaylist(pl) },
-                        )
+                        .clickable { onSelectPlaylist(pl) }
                         .padding(horizontal = 6.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically,
                   ) {
@@ -499,5 +497,58 @@ fun LibraryBrowserView(
         }
       }
     }
+  }
+}
+
+/**
+ * Displays a track title with crisp ellipsis when unselected, and smoothly cycles forward &
+ * backward (ping-pong marquee) when selected so long titles/filenames are readable in full (ADR-024).
+ */
+@Composable
+private fun PingPongSelectableTrackTitle(
+  text: String,
+  isSelected: Boolean,
+  color: Color,
+  modifier: Modifier = Modifier,
+) {
+  val skin = LocalDroidAmpSkin.current
+  if (!isSelected) {
+    Text(
+      text = text,
+      style = skin.typography.trackRow,
+      color = color,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+      modifier = modifier,
+    )
+    return
+  }
+
+  val scrollState = rememberScrollState()
+  LaunchedEffect(text, isSelected) {
+    scrollState.scrollTo(0)
+    delay(350L)
+    while (true) {
+      val max = scrollState.maxValue
+      if (max <= 0) {
+        delay(400L)
+        continue
+      }
+      val durationMs = (max * 14).coerceIn(1_200, 6_500)
+      scrollState.animateScrollTo(max, tween(durationMillis = durationMs, easing = LinearEasing))
+      delay(550L)
+      scrollState.animateScrollTo(0, tween(durationMillis = durationMs, easing = LinearEasing))
+      delay(550L)
+    }
+  }
+
+  Box(modifier = modifier.horizontalScroll(scrollState, enabled = false)) {
+    Text(
+      text = text,
+      style = skin.typography.trackRow,
+      color = color,
+      maxLines = 1,
+      softWrap = false,
+    )
   }
 }

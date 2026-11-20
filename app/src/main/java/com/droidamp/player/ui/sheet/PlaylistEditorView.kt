@@ -183,7 +183,10 @@ fun PlaylistEditorView(
       contentPadding = PaddingValues(2.dp),
     ) {
       if (filteredEntries.isEmpty()) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Box(
+          modifier = Modifier.fillMaxSize().padding(top = 28.dp),
+          contentAlignment = Alignment.TopCenter,
+        ) {
           Text(
             text =
               if (queue.isEmpty()) {

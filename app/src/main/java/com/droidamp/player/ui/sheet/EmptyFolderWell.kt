@@ -34,8 +34,8 @@ fun EmptyFolderWell(
     contentPadding = PaddingValues(horizontal = 14.dp, vertical = if (compactPeek) 8.dp else 20.dp),
   ) {
     Column(
-      modifier = Modifier.fillMaxSize(),
-      verticalArrangement = Arrangement.Center,
+      modifier = Modifier.fillMaxSize().padding(top = if (compactPeek) 6.dp else 24.dp),
+      verticalArrangement = Arrangement.Top,
       horizontalAlignment = Alignment.CenterHorizontally,
     ) {
       Text(

@@ -15,13 +15,17 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -32,7 +36,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -182,23 +189,27 @@ fun DroidAmpRackScreen(
     viewModel.onBackPressedInExpandedSheet()
   }
 
+  val isDarkSystemTheme = isSystemInDarkTheme()
+  val statusBarTopDp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+
   BoxWithConstraints(
     modifier =
       modifier
         .fillMaxSize()
-        .background(skin.chassis.windowBackground)
-        .statusBarsPadding(),
+        .background(skin.chassis.windowBackground),
   ) {
     val fullHeightPx = constraints.maxHeight.toFloat().coerceAtLeast(1f)
+    val statusBarTopPx = with(density) { statusBarTopDp.toPx() }
     val minBrowserHeightPx = with(density) { 180.dp.toPx() }
     var instrumentHeightPx by remember { mutableFloatStateOf((fullHeightPx - minBrowserHeightPx).coerceAtLeast(1f)) }
 
-    // Maximum vertical pan distance = full height of Main Deck + EQ + bezel buffer
-    val maxPanPx = instrumentHeightPx.coerceIn(1f, (fullHeightPx - minBrowserHeightPx).coerceAtLeast(1f))
+    // Maximum vertical pan distance leaves the expanded browser titlebar cleanly below the status bar
+    val maxPanPx =
+      (instrumentHeightPx - statusBarTopPx).coerceIn(1f, (fullHeightPx - minBrowserHeightPx).coerceAtLeast(1f))
 
     // Stereo-Tower Camera Pan offset:
-    // 0f        = Resting (looking at top of stereo: Main Deck + EQ + live Queue/Library below)
-    // maxPanPx  = Expanded (panned down to bottom of stereo: Main Deck + EQ smoothly above viewport)
+    // 0f        = Resting (Main Deck + EQ + live Queue/Library below)
+    // maxPanPx  = Expanded (Main Deck + EQ smoothly panned up behind status bar scrim)
     val panOffsetPx = remember { Animatable(0f) }
 
     LaunchedEffect(uiState.isSheetExpanded, maxPanPx) {
@@ -221,10 +232,8 @@ fun DroidAmpRackScreen(
       val progress = (panOffsetPx.value / maxPanPx).coerceIn(0f, 1f)
       val shouldExpand =
         if (uiState.isSheetExpanded) {
-          // Collapse if dragged down > 18% of travel or > 80px downward
           !(progress < 0.82f || totalDragY > 80f)
         } else {
-          // Expand if dragged up > 18% of travel or < -64px upward
           progress > 0.18f || totalDragY < -64f
         }
       if (shouldExpand) {
@@ -241,11 +250,11 @@ fun DroidAmpRackScreen(
     }
 
     val currentPan = panOffsetPx.value.coerceIn(0f, maxPanPx)
-    val browserTopPx = (maxPanPx - currentPan).coerceAtLeast(0f)
+    val browserTopPx = (instrumentHeightPx - currentPan).coerceAtLeast(statusBarTopPx)
     val browserHeightDp = with(density) { (fullHeightPx - browserTopPx).coerceAtLeast(minBrowserHeightPx).toDp() }
 
-    // Top Stereo Section: Main Deck + Collapsible EQ + non-interactive swipe buffer
-    // Translates smoothly UP and out of viewport together with the browser below (ADR-023)
+    // Top Stereo Section: status-bar spacer + Main Deck + Collapsible EQ + non-interactive swipe buffer
+    // Translates smoothly UP behind the adaptive status-bar scrim as the user pans (ADR-023 / ADR-024)
     Column(
       modifier =
         Modifier
@@ -256,6 +265,7 @@ fun DroidAmpRackScreen(
             if (h > 0f) instrumentHeightPx = h
           },
     ) {
+      Box(modifier = Modifier.fillMaxWidth().statusBarsPadding())
       MainDeckPanel(
         playbackState = playbackState,
         visualizerFrameProvider = { visualizerFrameState.value },
@@ -337,6 +347,7 @@ fun DroidAmpRackScreen(
         onDragDelta = onStereoPanDelta,
         onDragFinished = onStereoPanFinished,
         canPullDownToCollapse = { panOffsetPx.value > 0.5f },
+        isMidPan = { panOffsetPx.value > 0.5f && panOffsetPx.value < maxPanPx - 0.5f },
         onSelectMusicFolder = triggerSelectMusicFolder,
         onSwitchSheetMode = viewModel::switchSheetMode,
         onPlaylistTrackClick = viewModel::onPlaylistTrackClick,
@@ -384,6 +395,27 @@ fun DroidAmpRackScreen(
         onMoveTrack = viewModel::movePlaylistTrack,
       )
     }
+
+    // Adaptive light/dark translucent scrim over the Android status bar so EQ/Deck gliding
+    // behind the top bar preserves crystal-clear contrast for system icons (ADR-024).
+    val scrimBase = if (isDarkSystemTheme) Color.Black else Color.White
+    Box(
+      modifier =
+        Modifier
+          .fillMaxWidth()
+          .height(statusBarTopDp + 16.dp)
+          .align(Alignment.TopCenter)
+          .background(
+            Brush.verticalGradient(
+              colorStops =
+                arrayOf(
+                  0.0f to scrimBase.copy(alpha = 0.84f),
+                  0.62f to scrimBase.copy(alpha = 0.52f),
+                  1.0f to Color.Transparent,
+                ),
+            ),
+          ),
+    )
 
     if (uiState.showSavePlaylistDialog) {
       SavePlaylistDialog(
