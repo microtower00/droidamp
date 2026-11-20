@@ -41,6 +41,7 @@ import com.droidamp.player.domain.model.PlaylistSortOrder
 import com.droidamp.player.domain.model.SavedPlaylistEntry
 import com.droidamp.player.domain.model.SheetMode
 import com.droidamp.player.skin.LocalDroidAmpSkin
+import com.droidamp.player.skin.SkinEntry
 import com.droidamp.player.ui.components.BeveledLedToggleButton
 import com.droidamp.player.ui.components.ChassisTitleBar
 import com.droidamp.player.ui.components.HardwarePanel
@@ -68,6 +69,8 @@ fun UnifiedQueueLibraryPanel(
   libraryViewLevel: LibraryViewLevel,
   folderContents: FolderContents,
   playlists: List<SavedPlaylistEntry>,
+  availableSkins: List<SkinEntry>,
+  activeSkinId: String,
   selectedLibraryTrackIds: Set<String>,
   selectedPlaylistId: String?,
   libraryFeedbackBanner: String?,
@@ -101,6 +104,9 @@ fun UnifiedQueueLibraryPanel(
   onOpenLibraryRoot: () -> Unit,
   onOpenLibraryFolders: () -> Unit,
   onOpenLibraryPlaylists: () -> Unit,
+  onOpenLibrarySkins: () -> Unit,
+  onSelectSkin: (String) -> Unit,
+  onImportSkinClick: () -> Unit,
   onNavigateUp: () -> Unit,
   onOpenFolder: (FolderEntry) -> Unit,
   onPlayFolder: (FolderEntry) -> Unit,
@@ -302,6 +308,8 @@ fun UnifiedQueueLibraryPanel(
                 libraryViewLevel = libraryViewLevel,
                 folderContents = folderContents,
                 playlists = playlists,
+                availableSkins = availableSkins,
+                activeSkinId = activeSkinId,
                 selectedTrackIds = selectedLibraryTrackIds,
                 selectedPlaylistId = selectedPlaylistId,
                 queueCountByTrackId = queueCountByTrackId,
@@ -310,6 +318,9 @@ fun UnifiedQueueLibraryPanel(
                 onOpenLibraryRoot = onOpenLibraryRoot,
                 onOpenLibraryFolders = onOpenLibraryFolders,
                 onOpenLibraryPlaylists = onOpenLibraryPlaylists,
+                onOpenLibrarySkins = onOpenLibrarySkins,
+                onSelectSkin = onSelectSkin,
+                onImportSkinClick = onImportSkinClick,
                 onNavigateUp = onNavigateUp,
                 onOpenFolder = onOpenFolder,
                 onPlayFolder = onPlayFolder,

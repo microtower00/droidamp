@@ -87,9 +87,22 @@ fun DroidAmpRackScreen(
   val visualizerFrameState = viewModel.visualizerFrame.collectAsStateWithLifecycle()
   val linkedRoots by viewModel.linkedRoots.collectAsStateWithLifecycle()
   val storageBackend by viewModel.storageBackend.collectAsStateWithLifecycle()
+  val availableSkins by viewModel.availableSkins.collectAsStateWithLifecycle()
+  val activeSkin by viewModel.activeSkin.collectAsStateWithLifecycle()
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
   var pendingM3u8Export by remember { mutableStateOf<Pair<String, String>?>(null) }
+
+  val importSkinLauncher =
+    if (hasActivityResultOwner) {
+      rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+          viewModel.importSkinFromUri(uri.toString())
+        }
+      }
+    } else {
+      null
+    }
 
   val safPickerLauncher =
     if (hasActivityResultOwner) {
@@ -192,11 +205,13 @@ fun DroidAmpRackScreen(
   val isDarkSystemTheme = isSystemInDarkTheme()
   val statusBarTopDp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
+  CompositionLocalProvider(LocalDroidAmpSkin provides activeSkin) {
+  val currentSkin = LocalDroidAmpSkin.current
   BoxWithConstraints(
     modifier =
       modifier
         .fillMaxSize()
-        .background(skin.chassis.windowBackground),
+        .background(currentSkin.chassis.windowBackground),
   ) {
     val fullHeightPx = constraints.maxHeight.toFloat().coerceAtLeast(1f)
     val statusBarTopPx = with(density) { statusBarTopDp.toPx() }
@@ -338,6 +353,8 @@ fun DroidAmpRackScreen(
         libraryViewLevel = uiState.libraryViewLevel,
         folderContents = uiState.folderContents,
         playlists = uiState.playlists,
+        availableSkins = availableSkins,
+        activeSkinId = activeSkin.id,
         selectedLibraryTrackIds = uiState.selectedLibraryTrackIds,
         selectedPlaylistId = uiState.selectedLibraryPlaylistId,
         libraryFeedbackBanner = uiState.libraryFeedbackBanner,
@@ -371,6 +388,9 @@ fun DroidAmpRackScreen(
         onOpenLibraryRoot = viewModel::openLibraryRoot,
         onOpenLibraryFolders = viewModel::openLibraryFolders,
         onOpenLibraryPlaylists = viewModel::openLibraryPlaylists,
+        onOpenLibrarySkins = viewModel::openLibrarySkins,
+        onSelectSkin = viewModel::selectSkin,
+        onImportSkinClick = { importSkinLauncher?.launch(arrayOf("*/*")) },
         onNavigateUp = viewModel::navigateFolderUp,
         onOpenFolder = viewModel::openFolder,
         onPlayFolder = viewModel::playFolderAsPlaylist,
@@ -441,6 +461,7 @@ fun DroidAmpRackScreen(
         },
       )
     }
+  }
   }
 }
 

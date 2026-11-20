@@ -17,6 +17,10 @@ import com.droidamp.player.interop.BinaryEqfCodec
 import com.droidamp.player.interop.WinampIniParser
 import com.droidamp.player.interop.WinampPlaylistCodec
 import com.droidamp.player.interop.WinampQ2Codec
+import com.droidamp.player.skin.AndroidSkinRepository
+import com.droidamp.player.skin.SkinPreferencesStore
+import com.droidamp.player.skin.SkinRepository
+import com.droidamp.player.skin.StaticSkinRepository
 import com.droidamp.player.storage.AndroidAudioMetadataProbe
 import com.droidamp.player.storage.AndroidMediaStoreGateway
 import com.droidamp.player.storage.AudioMetadataExtractor
@@ -90,6 +94,14 @@ class DroidAmpAppContainer private constructor(
       eqfCodec = eqfCodec,
     )
 
+  val skinPreferencesStore: SkinPreferencesStore = SkinPreferencesStore.create(appContext)
+  val skinRepository: SkinRepository =
+    AndroidSkinRepository(
+      appContext = appContext,
+      preferencesStore = skinPreferencesStore,
+      scope = appScope,
+    )
+
   fun viewModelFactory(): ViewModelProvider.Factory =
     createViewModelFactory(
       audioEngine = audioEngine,
@@ -97,6 +109,7 @@ class DroidAmpAppContainer private constructor(
       autoEqResolver = autoEqResolver,
       playlistCodec = playlistCodec,
       autoEqCatalogProvider = autoEqCatalogProvider,
+      skinRepository = skinRepository,
     )
 
   companion object {
@@ -114,6 +127,7 @@ class DroidAmpAppContainer private constructor(
       autoEqResolver: AutoEqPresetResolver = AutoEqMatcher(),
       playlistCodec: PlaylistFileCodec = WinampPlaylistCodec(),
       autoEqCatalogProvider: AutoEqCatalogProvider = EmptyAutoEqCatalogProvider,
+      skinRepository: SkinRepository = StaticSkinRepository(),
     ): ViewModelProvider.Factory =
       object : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
@@ -127,6 +141,7 @@ class DroidAmpAppContainer private constructor(
             autoEqResolver = autoEqResolver,
             playlistCodec = playlistCodec,
             autoEqCatalogProvider = autoEqCatalogProvider,
+            skinRepository = skinRepository,
           ) as T
         }
       }

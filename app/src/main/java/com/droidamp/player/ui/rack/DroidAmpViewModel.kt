@@ -24,6 +24,10 @@ import com.droidamp.player.domain.model.WinampEqSpec
 import com.droidamp.player.interop.AutoEqMatcher
 import com.droidamp.player.interop.WinampPlaylistCodec
 import com.droidamp.player.interop.WinampPresetLibrary
+import com.droidamp.player.skin.DroidAmpSkin
+import com.droidamp.player.skin.SkinEntry
+import com.droidamp.player.skin.SkinRepository
+import com.droidamp.player.skin.StaticSkinRepository
 import com.droidamp.player.ui.sheet.PlaylistMicroMenu
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -68,6 +72,7 @@ class DroidAmpViewModel(
   private val autoEqResolver: AutoEqPresetResolver = AutoEqMatcher(),
   private val playlistCodec: PlaylistFileCodec = WinampPlaylistCodec(),
   private val autoEqCatalogProvider: AutoEqCatalogProvider = EmptyAutoEqCatalogProvider,
+  private val skinRepository: SkinRepository = StaticSkinRepository(),
 ) : ViewModel() {
 
   private data class AutoEqTriggerKey(
@@ -80,6 +85,8 @@ class DroidAmpViewModel(
   val visualizerFrame: StateFlow<VisualizerFrame> = audioEngine.visualizerFrame
   val linkedRoots: StateFlow<List<FolderEntry>> = musicRepository.linkedRoots
   val storageBackend: StateFlow<StorageBackend> = musicRepository.storageBackend
+  val availableSkins: StateFlow<List<SkinEntry>> = skinRepository.availableSkins
+  val activeSkin: StateFlow<DroidAmpSkin> = skinRepository.activeSkin
 
   private val _uiState = MutableStateFlow(RackUiState())
   val uiState: StateFlow<RackUiState> = _uiState.asStateFlow()
@@ -100,8 +107,8 @@ class DroidAmpViewModel(
       musicRepository.linkedRoots
         .map { roots -> roots.map { it.uriString } }
         .distinctUntilChanged()
-        .drop(1)
-        .collect {
+        .collect { rootUris ->
+          skinRepository.refreshSkins(rootUris)
           refreshLibraryFromCurrentRoot()
         }
     }
@@ -315,7 +322,7 @@ class DroidAmpViewModel(
             openLibraryRoot()
           }
         }
-        LibraryViewLevel.PLAYLISTS -> openLibraryRoot()
+        LibraryViewLevel.PLAYLISTS, LibraryViewLevel.SKINS -> openLibraryRoot()
         LibraryViewLevel.ROOT -> collapseSheet()
       }
     } else {
@@ -353,6 +360,45 @@ class DroidAmpViewModel(
         selectedLibraryPlaylistId = null,
       )
     }
+  }
+
+  fun openLibrarySkins() {
+    skinRepository.refreshSkins(linkedRoots.value.map { it.uriString })
+    _uiState.update {
+      it.copy(
+        libraryViewLevel = LibraryViewLevel.SKINS,
+        selectedLibraryTrackIds = emptySet(),
+        selectedLibraryPlaylistId = null,
+      )
+    }
+  }
+
+  fun selectSkin(skinId: String) {
+    skinRepository.selectSkin(skinId)
+    val label = availableSkins.value.firstOrNull { it.id == skinId }?.displayName ?: skinId
+    showLibraryBanner("SKIN: ${label.uppercase()}")
+  }
+
+  fun importSkinFromUri(uriString: String) {
+    viewModelScope.launch {
+      skinRepository.importSkinFromUri(uriString)
+        .onSuccess { entry ->
+          showLibraryBanner("IMPORTED SKIN: ${entry.displayName.uppercase()}")
+        }
+        .onFailure { error ->
+          showLibraryBanner("SKIN IMPORT FAILED: ${error.message?.take(36)?.uppercase() ?: "INVALID .WSZ"}")
+        }
+    }
+  }
+
+  private fun showLibraryBanner(message: String) {
+    libraryFeedbackJob?.cancel()
+    _uiState.update { it.copy(libraryFeedbackBanner = message) }
+    libraryFeedbackJob =
+      viewModelScope.launch {
+        delay(2_200L)
+        _uiState.update { it.copy(libraryFeedbackBanner = null) }
+      }
   }
 
   fun clearLibrarySelection() {

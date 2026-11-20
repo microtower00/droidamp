@@ -19,6 +19,7 @@ enum class LibraryViewLevel {
   ROOT,
   FOLDERS,
   PLAYLISTS,
+  SKINS,
 }
 
 enum class PlaylistExportFormat(val extension: String, val mimeType: String) {

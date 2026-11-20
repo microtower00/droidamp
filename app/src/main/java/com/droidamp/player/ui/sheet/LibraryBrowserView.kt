@@ -38,6 +38,8 @@ import com.droidamp.player.domain.model.LibraryViewLevel
 import com.droidamp.player.domain.model.SavedPlaylistEntry
 import com.droidamp.player.domain.model.formatWinampDuration
 import com.droidamp.player.skin.LocalDroidAmpSkin
+import com.droidamp.player.skin.SkinEntry
+import com.droidamp.player.skin.SkinSource
 import com.droidamp.player.ui.components.BeveledButton
 import com.droidamp.player.ui.components.RecessedWell
 
@@ -55,6 +57,8 @@ fun LibraryBrowserView(
   libraryViewLevel: LibraryViewLevel,
   folderContents: FolderContents,
   playlists: List<SavedPlaylistEntry>,
+  availableSkins: List<SkinEntry>,
+  activeSkinId: String,
   selectedTrackIds: Set<String>,
   selectedPlaylistId: String?,
   queueCountByTrackId: Map<String, Int>,
@@ -63,6 +67,9 @@ fun LibraryBrowserView(
   onOpenLibraryRoot: () -> Unit,
   onOpenLibraryFolders: () -> Unit,
   onOpenLibraryPlaylists: () -> Unit,
+  onOpenLibrarySkins: () -> Unit,
+  onSelectSkin: (String) -> Unit,
+  onImportSkinClick: () -> Unit,
   onNavigateUp: () -> Unit,
   onOpenFolder: (FolderEntry) -> Unit,
   onPlayFolder: (FolderEntry) -> Unit,
@@ -87,14 +94,14 @@ fun LibraryBrowserView(
     when (libraryViewLevel) {
       LibraryViewLevel.FOLDERS -> selectedTrackIds.isNotEmpty()
       LibraryViewLevel.PLAYLISTS -> selectedPlaylistId != null
-      LibraryViewLevel.ROOT -> false
+      LibraryViewLevel.ROOT, LibraryViewLevel.SKINS -> false
     }
 
   Column(
     modifier = modifier.fillMaxSize(),
     verticalArrangement = Arrangement.spacedBy(5.dp),
   ) {
-    if (!hasLinkedRoots) {
+    if (!hasLinkedRoots && libraryViewLevel != LibraryViewLevel.SKINS && libraryViewLevel != LibraryViewLevel.ROOT) {
       EmptyFolderWell(
         onSelectMusicFolder = onSelectMusicFolder,
         modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -106,6 +113,7 @@ fun LibraryBrowserView(
           ?: when (libraryViewLevel) {
             LibraryViewLevel.ROOT -> "LIBRARY"
             LibraryViewLevel.PLAYLISTS -> "LIBRARY / PLAYLISTS"
+            LibraryViewLevel.SKINS -> "LIBRARY / SKINS (.WSZ)"
             LibraryViewLevel.FOLDERS -> {
               if (folderContents.currentPathSegments.isEmpty()) {
                 "LIBRARY / FOLDERS"
@@ -219,6 +227,114 @@ fun LibraryBrowserView(
                       text = "${playlists.size} SAVED .M3U / .M3U8 / .PLS",
                       style = skin.typography.microLabel,
                       color = skin.vfd.phosphorDim,
+                    )
+                  }
+                }
+              }
+
+              item(key = "root-skins") {
+                val activeName =
+                  availableSkins.firstOrNull { it.id == activeSkinId }?.displayName ?: "DroidAmp Classic"
+                Row(
+                  modifier =
+                    Modifier
+                      .fillMaxWidth()
+                      .clickable(onClick = onOpenLibrarySkins)
+                      .padding(horizontal = 8.dp, vertical = 12.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                ) {
+                  Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                      text = "> [SKN] SKINS (.WSZ)",
+                      style = skin.typography.trackRow,
+                      color = skin.playlist.currentText,
+                    )
+                    Text(
+                      text = "ACTIVE: ${activeName.uppercase()} · ${availableSkins.size} AVAILABLE",
+                      style = skin.typography.microLabel,
+                      color = skin.vfd.phosphorDim,
+                      maxLines = 1,
+                      overflow = TextOverflow.Ellipsis,
+                    )
+                  }
+                }
+              }
+            }
+          }
+
+          LibraryViewLevel.SKINS -> {
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+              item(key = "skn-back") {
+                Row(
+                  modifier =
+                    Modifier
+                      .fillMaxWidth()
+                      .clickable(onClick = onOpenLibraryRoot)
+                      .padding(horizontal = 8.dp, vertical = 9.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                ) {
+                  Text(
+                    text = "[..]  BACK TO LIBRARY",
+                    style = skin.typography.trackRow,
+                    color = skin.playlist.breadcrumbText,
+                  )
+                }
+              }
+
+              item(key = "skn-import") {
+                Row(
+                  modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                ) {
+                  BeveledButton(
+                    label = "+ IMPORT .WSZ SKIN",
+                    onClick = onImportSkinClick,
+                    highlighted = true,
+                    modifier = Modifier.fillMaxWidth().height(32.dp),
+                  )
+                }
+              }
+
+              items(items = availableSkins, key = { "skin-${it.id}" }) { entry ->
+                val isActive = entry.id == activeSkinId
+                val rowBg =
+                  if (isActive) skin.playlist.selectedBackground else skin.playlist.normalBackground
+                val rowFg =
+                  if (isActive) skin.playlist.selectedText else skin.playlist.normalText
+                val sourceTag =
+                  when (entry.source) {
+                    SkinSource.BUILT_IN -> "BUILT-IN"
+                    SkinSource.IMPORTED -> "IMPORTED .WSZ"
+                    SkinSource.SAF_FOLDER -> "MUSIC FOLDER .WSZ"
+                  }
+                Row(
+                  modifier =
+                    Modifier
+                      .fillMaxWidth()
+                      .background(rowBg)
+                      .clickable { onSelectSkin(entry.id) }
+                      .padding(horizontal = 8.dp, vertical = 9.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                ) {
+                  Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                      text = entry.displayName,
+                      style = skin.typography.trackRow,
+                      color = rowFg,
+                      maxLines = 1,
+                      overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                      text = sourceTag,
+                      style = skin.typography.microLabel,
+                      color = if (isActive) rowFg.copy(alpha = 0.85f) else skin.vfd.phosphorDim,
+                    )
+                  }
+                  if (isActive) {
+                    Text(
+                      text = "[ACTIVE]",
+                      style = skin.typography.microLabel,
+                      color = skin.vfd.phosphorPrimary,
                     )
                   }
                 }
