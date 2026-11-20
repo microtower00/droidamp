@@ -27,6 +27,7 @@ import com.droidamp.player.domain.model.RepeatMode
 import com.droidamp.player.domain.model.VisualizerFrame
 import com.droidamp.player.domain.model.formatWinampDuration
 import com.droidamp.player.skin.LocalDroidAmpSkin
+import com.droidamp.player.skin.TransportIconType
 import com.droidamp.player.ui.components.BeveledIconButton
 import com.droidamp.player.ui.components.BeveledLedToggleButton
 import com.droidamp.player.ui.components.ChassisTitleBar
@@ -37,7 +38,6 @@ import com.droidamp.player.ui.components.RecessedWell
 import com.droidamp.player.ui.components.ScrollingMarqueeText
 import com.droidamp.player.ui.components.SevenSegmentClock
 import com.droidamp.player.ui.components.SliderTrackStyle
-import com.droidamp.player.ui.components.TransportIconType
 import com.droidamp.player.ui.components.VfdStatusGlyph
 import com.droidamp.player.ui.components.VfdVisualizerCanvas
 import kotlin.math.roundToInt

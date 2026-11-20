@@ -43,6 +43,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.droidamp.player.skin.DroidAmpSkin
 import com.droidamp.player.skin.LocalDroidAmpSkin
+import com.droidamp.player.skin.TransportIconType
 
 fun Modifier.raisedBevel(
   skin: DroidAmpSkin,

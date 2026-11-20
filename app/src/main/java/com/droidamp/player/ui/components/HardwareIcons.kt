@@ -13,15 +13,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.droidamp.player.domain.model.PlaybackStatus
 import com.droidamp.player.skin.LocalDroidAmpSkin
-
-enum class TransportIconType {
-  PREV,
-  PLAY,
-  PAUSE,
-  STOP,
-  NEXT,
-  EJECT,
-}
+import com.droidamp.player.skin.TransportIconType
 
 /**
  * Pixel-aligned classic Winamp carved hardware transport glyphs (`cbuttons.bmp` equivalent).

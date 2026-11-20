@@ -106,16 +106,33 @@ data class PlaylistPalette(
   val breadcrumbText: Color,
 )
 
-/** Optional bitmap sprite slots populated by future `.wsz` skin archives (Milestone 5). */
+enum class TransportIconType {
+  PREV,
+  PLAY,
+  PAUSE,
+  STOP,
+  NEXT,
+  EJECT,
+}
+
+/** Optional bitmap sprite slots populated by `.wsz` Winamp 2.x skin archives (Milestone 5). */
 @Immutable
 data class SkinSprites(
-  val mainBackground: ImageBitmap? = null,
-  val transportNormal: ImageBitmap? = null,
-  val transportPressed: ImageBitmap? = null,
-  val digitSheet: ImageBitmap? = null,
-  val bitmapFontSheet: ImageBitmap? = null,
-  val sliderThumb: ImageBitmap? = null,
-  val playlistBorderTile: ImageBitmap? = null,
+  val transportNormal: Map<TransportIconType, ImageBitmap> = emptyMap(),
+  val transportPressed: Map<TransportIconType, ImageBitmap> = emptyMap(),
+  val vfdPlayIcon: ImageBitmap? = null,
+  val vfdPauseIcon: ImageBitmap? = null,
+  val vfdStopIcon: ImageBitmap? = null,
+  val clockDigits: List<ImageBitmap> = emptyList(), // 0..9, optional blank(10), optional minus(11)
+  val volumeTrackFrames: List<ImageBitmap> = emptyList(), // up to 28 horizontal frames
+  val volumeThumb: ImageBitmap? = null,
+  val balanceTrackFrames: List<ImageBitmap> = emptyList(), // up to 28 horizontal frames
+  val balanceThumb: ImageBitmap? = null,
+  val seekbarTrack: ImageBitmap? = null,
+  val seekbarThumb: ImageBitmap? = null,
+  val eqSliderFrames: List<ImageBitmap> = emptyList(), // up to 28 vertical frames
+  val eqThumb: ImageBitmap? = null,
+  val titleBarActive: ImageBitmap? = null,
 )
 
 @Immutable
