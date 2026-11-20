@@ -109,19 +109,25 @@ Core parsers and serializers are implemented in the domain/data layer early (tho
 
 ## 6. Phased Implementation Roadmap
 
-1. **Milestone 1 — Foundation, Skin Contract & Retro Hardware UI Shell**:
-   - Add Media3, DataStore, and Coroutines dependencies.
-   - Implement `DroidAmpSkin` contract + built-in **DroidAmp Classic** skeuomorphic primitives (3D bevels, 7-segment clock, pixel labels, VFD spectrum/oscilloscope canvas, curve-drawable 10-band EQ with preamp gap & swipe buffer).
-   - Build the interactive **Deck + Collapsible EQ + Expandable Full-Screen Playlist/Library Sheet** shell with mode-specific trimmed toolbars, micro-menus, safe gesture insets, and first-run empty state.
-2. **Milestone 2 — Media3 Audio Service & Custom DSP Pipeline**:
+1. **Milestone 1 — Foundation, Skin Contract & Retro Hardware UI Shell** *(Done)*:
+   - Added Media3, DataStore, and Coroutines dependencies.
+   - Implemented `DroidAmpSkin` contract + built-in **DroidAmp Classic** skeuomorphic primitives (3D bevels, 7-segment clock, carved transport glyphs, 60–120fps VFD spectrum/oscilloscope, curve-drawable 10-band EQ with `PREAMP` gap & `systemGestureExclusion()`).
+   - Iterated through User Tests #1–#4 to lock the **Balanced Stereo-Tower 1:1 Pan**, bottom thumb-zone `[QUEUE (N)] | [LIBRARY]` tabs with horizontal swipe, iPod-style Library root, 0ms Library selection + ping-pong marquee, and `Save Queue as Playlist` (`.m3u8` / `.pls`).
+2. **Milestone 2 — Media3 Audio Service & Custom DSP Pipeline** *(Done)*:
    - Foreground `MediaSessionService` with lockscreen/notification artwork & Bluetooth controls.
-   - Custom PCM `AudioProcessor` (10-band Winamp EQ + Preamp, independent Volume/Balance with cold-start-only reset, ReplayGain, lock-free FFT/oscilloscope tap, gapless & crossfade).
-3. **Milestone 3 — Storage (SAF Default + MediaStore Engine) & Live Playlist/Library**:
+   - Custom PCM `AudioProcessor` (10-band Winamp EQ + Preamp, independent Volume/Balance with cold-start-only reset, ReplayGain, cursor-tracked lock-free FFT/oscilloscope tap, gapless & crossfade).
+3. **Milestone 3 — Storage (SAF Default + MediaStore Engine) & Live Queue/Library** *(Done)*:
    - `MusicSourceRepository` with SAF tree scanner and MediaStore scanner.
-   - Folder & Playlist browser (`[FOLDERS]` | `[PLAYLISTS]`) with select-first track safety, `[▶]` / `[+]` actions, drag-to-reorder playlist editor, `REM`/`MISC`/`LIST` micro-menus, and Jump-to-Track filter.
-4. **Milestone 4 — Winamp Format Engines (Backend Only, Unit-Tested)**:
-   - Pure Kotlin `.eqf`, `winamp.q1`/`q2`, `winamp.ini`, and `.m3u`/`.m3u8`/`.pls` importers & exporters + built-in classic Winamp EQ presets + `AUTO` preset matching.
-5. **Milestone 5 — `.wsz` Skin Engine (Customizability Unlock)**:
-   - Deterministic `.wsz` zip parser slicing BMP sprites + `pledit.txt` + `viscolor.txt` directly into `DroidAmpSkin` (Adaptive Mobile mode + optional Classic Deck mode).
-6. **Milestone 6 — Settings UI & Final Integration**:
-   - Design and implement the dedicated **Settings** UI (post-onboarding folder picker, SAF/MediaStore toggle, ReplayGain/Crossfade/Gapless controls, cold-launch volume default, Winamp config/EQ import & export UI, and `.wsz` skin chooser).
+   - Folder & Playlist browser (`FOLDERS` | `PLAYLISTS`) with select-first track safety, `[▶]` / `[+]` actions, drag-to-reorder queue editor, `REM`/`MISC`/`LIST` micro-menus, and auto-focused Jump-to-Track filter.
+4. **Milestone 4 — Winamp Format Engines (Backend Only, Unit-Tested)** *(Done)*:
+   - Pure Kotlin `.eqf`, `winamp.q1`/`q2`, `winamp.ini`, and `.m3u`/`.m3u8`/`.pls` importers & exporters + 18 built-in classic Winamp EQ presets + `AUTO` preset matching.
+5. **Milestone 5 — `.wsz` / Native Skin Engine** *(In Progress on `feat/m5-wsz-skin-engine`)*:
+   - Deterministic `.wsz` parser (`viscolor.txt`, `pledit.txt`, `cbuttons`, `shufrep`, `monoster`, `nums_ex`, `playpaus`, `volume`/`balance`/`posbar`, `eqmain`, `titlebar`) + `SkinRepository` & DataStore persistence.
+   - **Open Design Question (`ADR-027`)**: Resolve non-self-contained 24-bit BMP seams, skin the bottom Queue/Library header & EQ spline graph, and evaluate an augmented `.wsz` / native format (with alpha overrides for spriteless mobile buttons) or Classic `275×116` canvas mode so skins feel 100% native.
+6. **Milestone 6 — Settings UI & Final Integration** *(Planned — see [SETTINGS_ROADMAP.md](SETTINGS_ROADMAP.md))*:
+   - Dedicated Settings UI organized along the **Classic Winamp (1:1) ↔ Mobile-Optimized** authenticity spectrum.
+   - Post-onboarding SAF folder management, SAF/MediaStore toggle, Hardware Volume Rocker ↔ App Volume linking option, cold-launch volume reset toggle, ReplayGain/Crossfade/Gapless controls, Winamp `.eqf`/`q1`/`q2`/`winamp.ini` import & export triggers, and skin selector.
+7. **Milestone 7 — Hardening, Release & F-Droid Submission** *(Planned — see [FDROID.md](FDROID.md))*:
+   - Resolve Tier 5 crossfade/error edge cases (`G-1`..`G-6` in [RETROSPECTIVE_M2_M4.md](RETROSPECTIVE_M2_M4.md)) and update Android instrumented E2E suites for the final v2 UI.
+   - Cut tagged release on `release` (including `LICENSE`, `dependenciesInfo = false`, updated `README.md` & `fastlane/` screenshots, and optional `512×512` `fastlane/metadata/android/en-US/images/icon.png`).
+   - Fork `https://gitlab.com/fdroid/fdroiddata`, add `metadata/com.droidamp.player.yml` from [FDROID.md](FDROID.md), and open the F-Droid Merge Request.
