@@ -75,3 +75,8 @@ DroidAmp follows **Semantic Versioning 2.0.0** (`vMAJOR.MINOR.PATCH[-alpha.N|-be
 - [SETTINGS_ROADMAP.md](SETTINGS_ROADMAP.md) — Milestone 6 Settings roadmap (Classic Winamp 1:1 ↔ Mobile-Optimized)
 - [WORKFLOW.md](WORKFLOW.md) — Agentic development workflow & verification playbook
 - [RETROSPECTIVE_M2_M4.md](RETROSPECTIVE_M2_M4.md) — Milestones 2–4 build & verification retrospective
+- [FDROID.md](FDROID.md) — F-Droid submission metadata & checklist
+
+## License
+
+DroidAmp is free software licensed under the **GNU General Public License v3.0 or later** ([GPL-3.0-or-later](LICENSE)).

@@ -1,0 +1,4 @@
+Initial alpha pre-release (v0.1.0-alpha.1):
+- Media3 foreground playback service with custom inline PCM DSP (10-band Winamp EQ, ReplayGain, gapless, crossfade, 60-120fps VFD visualizer).
+- Stereo-tower 1:1 pan UI with bottom thumb-zone Queue/Library tabs, iPod-style Library root, and Save Queue as .m3u8/.pls dialog.
+- Full backend Winamp format codecs (.eqf, winamp.q1/q2, winamp.ini, .m3u/.m3u8/.pls) and AUTO EQ matching.
