@@ -51,6 +51,12 @@ android {
         excludes += "/META-INF/{AL2.0,LGPL2.1}"
       }
     }
+
+    // F-Droid compliance: exclude Google Play signing-block dependency metadata
+    dependenciesInfo {
+      includeInApk = false
+      includeInBundle = false
+    }
 }
 
 kotlin {

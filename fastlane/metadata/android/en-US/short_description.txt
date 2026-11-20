@@ -1,0 +1,1 @@
+Offline late-90s Winamp-inspired local music player with 10-band EQ & DSP.

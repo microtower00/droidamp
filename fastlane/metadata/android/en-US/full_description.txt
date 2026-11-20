@@ -1,0 +1,9 @@
+DroidAmp is a strictly offline, zero-telemetry Android local music player modeled after late-1990s Winamp 2.x and hi-fi stereo racks.
+
+Features:
+* Strictly offline: zero INTERNET, ACCESS_NETWORK_STATE, or RECORD_AUDIO permissions.
+* Custom inline PCM DSP pipeline powered by AndroidX Media3 (ExoPlayer): 10-band Winamp biquad equalizer (60Hz–16kHz) + isolated Preamp, 18 built-in classic presets, AUTO EQ matching, ReplayGain (Track/Album + Preamp), gapless playback, and configurable crossfade.
+* Real-time 60–120fps VFD spectrum analyzer (19 bands + falling peak dots) and oscilloscope tapped directly from decoded PCM.
+* Stereo-tower 1:1 pan UI with Main Deck, collapsible 10-band EQ (horizontal curve drawing), and live Queue & iPod-style Library browser.
+* Winamp file interoperability: .eqf, winamp.q1, winamp.q2, winamp.ini, and .m3u / .m3u8 / .pls import & export.
+* Privacy-first SAF folder picker by default (plus optional MediaStore backend).
