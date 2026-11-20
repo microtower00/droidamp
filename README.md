@@ -61,9 +61,17 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ./gradlew connectedDebugAndroidTest
 ```
 
+## Versioning & Releases
+
+DroidAmp follows **Semantic Versioning 2.0.0** (`vMAJOR.MINOR.PATCH[-alpha.N|-beta.N|-rc.N]`) paired with a strictly monotonic Android `versionCode` in [`app/build.gradle.kts`](app/build.gradle.kts) (see [ADR-025](DECISIONS.md)).
+
+- **Pre-releases (`alpha` / `beta` / `rc`)**: Published under [GitHub Releases](https://github.com/microtower00/droidamp/releases) with a sideloadable APK attached.
+- **Current Alpha**: `v0.1.0-alpha.1` (`versionCode = 1`).
+
 ## Documentation
 
 - [DESIGN.md](DESIGN.md) — Product, UX, visual, and technical architecture specification
-- [DECISIONS.md](DECISIONS.md) — Architectural & UX Decision Log (ADR-001 through ADR-016)
+- [DECISIONS.md](DECISIONS.md) — Architectural & UX Decision Log (ADR-001 through ADR-025)
+- [SETTINGS_ROADMAP.md](SETTINGS_ROADMAP.md) — Milestone 6 Settings roadmap (Classic Winamp 1:1 ↔ Mobile-Optimized)
 - [WORKFLOW.md](WORKFLOW.md) — Agentic development workflow & verification playbook
 - [RETROSPECTIVE_M2_M4.md](RETROSPECTIVE_M2_M4.md) — Milestones 2–4 build & verification retrospective

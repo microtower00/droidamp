@@ -4,6 +4,19 @@ plugins {
   alias(libs.plugins.kotlin.serialization)
 }
 
+// SemVer + pre-release versioning convention (ADR-025)
+val appVersionMajor = 0
+val appVersionMinor = 1
+val appVersionPatch = 0
+val appPreReleaseTag = "alpha.1" // Empty string for stable releases
+val appVersionCode = 1           // Strictly monotonic integer per published build
+val appVersionName =
+  if (appPreReleaseTag.isBlank()) {
+    "$appVersionMajor.$appVersionMinor.$appVersionPatch"
+  } else {
+    "$appVersionMajor.$appVersionMinor.$appVersionPatch-$appPreReleaseTag"
+  }
+
 android {
     namespace = "com.droidamp.player"
     compileSdk = 36
@@ -11,8 +24,8 @@ android {
         applicationId = "com.droidamp.player"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

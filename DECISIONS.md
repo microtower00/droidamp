@@ -209,3 +209,13 @@ This log records the key product, UX, and engineering decisions made during the 
   - **Full-Bleed Option A Prototype (`UI:BAL` / `UI:FULL`)**: Test a full-bleed Deck + dynamic tall EQ variant alongside Balanced Rack using the same Stereo-Tower Pan.
   - **Settings Roadmap (`SETTINGS_ROADMAP.md`)**: Document Milestone 6 Settings around the **Classic 1:1 Winamp Authenticity ↔ Mobile-Optimized Ergonomics** spectrum, including optional Hardware Volume Rocker ↔ Internal App Volume linking.
 - **Rationale**: Eliminates the last optical and kinesthetic rough edges in the stereo-tower pan and Library browser while organizing all backend M2–M4 + mobile ergonomics options into a clear Milestone 6 Settings blueprint.
+
+## ADR-025: SemVer Pre-Release Versioning & GitHub Release Convention
+- **Date**: 2026-11-20
+- **Status**: Accepted
+- **Decision**:
+  - Adopt **Semantic Versioning 2.0.0** with explicit pre-release channels: `v<MAJOR>.<MINOR>.<PATCH>[-alpha.N|-beta.N|-rc.N]` (starting at **`v0.1.0-alpha.1`**).
+  - Keep `versionCode` as a strictly monotonic integer starting at `1` in `app/build.gradle.kts`, paired with single-source-of-truth `appVersionMajor` / `appVersionMinor` / `appVersionPatch` / `appPreReleaseTag` constants.
+  - Publish tagged alpha/beta/stable APKs via GitHub Releases (`--prerelease` for `alpha`/`beta`/`rc`), named `droidamp-v<versionName>-debug.apk` (for alpha test builds) or `droidamp-v<versionName>.apk` (for signed stable releases).
+  - Lock the **Balanced Stereo-Tower Rack** as the sole resting layout (scrapping the Full-Bleed Option A prototype after User Test #4).
+- **Rationale**: Gives testers and contributors clear, predictable upgrade paths and traceable GitHub Release artifacts from the first alpha onward.
