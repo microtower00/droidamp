@@ -102,8 +102,8 @@ object WszSpriteCoordinates {
   /**
    * Returns 28 standard frames when `bmpHeight >= 420`, or falls back to dynamic frame count
    * only when a skin provides an unexpected/shorter BMP height.
-   * Note: Winamp `volume.bmp` uses 68px width, whereas `balance.bmp` only uses the left 38px
-   * (the right padding in many skins is bright cyan/white chroma fill).
+   * Note: Winamp `volume.bmp` uses `(0, idx*15, 68, 13)`, whereas `balance.bmp` centers its
+   * `38px` groove at `x=9` (`(9, idx*15, 38, 13)`) with cyan chroma padding on the edges.
    */
   fun volumeOrBalanceFrameRects(
     bmpWidth: Int,
@@ -111,8 +111,9 @@ object WszSpriteCoordinates {
     isBalance: Boolean = false,
   ): List<SpriteRect> {
     if (bmpWidth <= 0 || bmpHeight < SLIDER_FRAME_HEIGHT) return emptyList()
+    val startX = if (isBalance && bmpWidth >= 47) 9 else 0
     val maxSpecWidth = if (isBalance) 38 else 68
-    val frameW = minOf(maxSpecWidth, bmpWidth)
+    val frameW = minOf(maxSpecWidth, bmpWidth - startX).coerceAtLeast(1)
     val frameCount =
       if (bmpHeight >= STANDARD_SLIDER_FRAME_COUNT * SLIDER_FRAME_STRIDE_Y) {
         STANDARD_SLIDER_FRAME_COUNT
@@ -122,7 +123,7 @@ object WszSpriteCoordinates {
           .coerceIn(1, STANDARD_SLIDER_FRAME_COUNT)
       }
     return List(frameCount) { idx ->
-      SpriteRect(0, idx * SLIDER_FRAME_STRIDE_Y, frameW, SLIDER_FRAME_HEIGHT)
+      SpriteRect(startX, idx * SLIDER_FRAME_STRIDE_Y, frameW, SLIDER_FRAME_HEIGHT)
     }.filter { it.fitsIn(bmpWidth, bmpHeight) }
   }
 
