@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -29,9 +30,12 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -113,6 +117,7 @@ fun PlaylistEditorView(
   onSavePlaylist: () -> Unit,
   onLoadPlaylist: () -> Unit,
   modifier: Modifier = Modifier,
+  showBottomActionBar: Boolean = true,
   onMoveTrack: (fromIndex: Int, toIndex: Int) -> Unit = { _, _ -> },
 ) {
   val skin = LocalDroidAmpSkin.current
@@ -121,10 +126,19 @@ fun PlaylistEditorView(
       buildPlaylistDisplayEntries(queue = queue, jumpFilterQuery = jumpFilterQuery)
     }
   val listState = rememberLazyListState()
+  val jumpFocusRequester = remember { FocusRequester() }
+  val keyboardController = LocalSoftwareKeyboardController.current
   var draggedOriginalIndex by remember { mutableStateOf<Int?>(null) }
   var dragOffsetY by remember { mutableFloatStateOf(0f) }
   val latestEntries by rememberUpdatedState(filteredEntries)
   val latestOnMoveTrack by rememberUpdatedState(onMoveTrack)
+
+  LaunchedEffect(showJumpFilter) {
+    if (showJumpFilter) {
+      jumpFocusRequester.requestFocus()
+      keyboardController?.show()
+    }
+  }
 
   Column(
     modifier = modifier.fillMaxSize(),
@@ -132,11 +146,11 @@ fun PlaylistEditorView(
   ) {
     if (showJumpFilter) {
       RecessedWell(
-        modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+        modifier = Modifier.fillMaxWidth().height(34.dp),
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
       ) {
         Row(
-          modifier = Modifier.fillMaxWidth(),
+          modifier = Modifier.fillMaxSize(),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -147,12 +161,16 @@ fun PlaylistEditorView(
             singleLine = true,
             textStyle = skin.typography.trackRow.copy(color = skin.vfd.phosphorPrimary),
             cursorBrush = SolidColor(skin.vfd.phosphorPrimary),
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).focusRequester(jumpFocusRequester),
           )
           BeveledButton(
             label = "X",
-            onClick = onToggleJumpFilter,
-            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+            onClick = {
+              keyboardController?.hide()
+              onToggleJumpFilter()
+            },
+            modifier = Modifier.height(24.dp),
+            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
           )
         }
       }
@@ -264,10 +282,12 @@ fun PlaylistEditorView(
                 else -> skin.playlist.normalText
               }
 
+            // Fixed 38.dp row height prevents vertical layout shift when selecting/deselecting (ADR-023)
             Row(
               modifier =
                 Modifier
                   .fillMaxWidth()
+                  .height(38.dp)
                   .zIndex(if (isDragging) 1f else 0f)
                   .graphicsLayer {
                     translationY = if (isDragging) dragOffsetY else 0f
@@ -277,7 +297,7 @@ fun PlaylistEditorView(
                     onClick = { onTrackClick(originalIndex) },
                     onDoubleClick = { onTrackDoubleClick(originalIndex) },
                   )
-                  .padding(horizontal = 6.dp, vertical = 7.dp),
+                  .padding(horizontal = 6.dp),
               verticalAlignment = Alignment.CenterVertically,
             ) {
               Text(
@@ -312,14 +332,16 @@ fun PlaylistEditorView(
                   label = "▲",
                   onClick = { onMoveTrackUp(originalIndex) },
                   enabled = originalIndex > 0,
-                  contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp),
+                  modifier = Modifier.height(24.dp),
+                  contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp),
                 )
                 Spacer(Modifier.width(2.dp))
                 BeveledButton(
                   label = "▼",
                   onClick = { onMoveTrackDown(originalIndex) },
                   enabled = originalIndex < queue.lastIndex,
-                  contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp),
+                  modifier = Modifier.height(24.dp),
+                  contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp),
                 )
               }
             }
@@ -329,10 +351,11 @@ fun PlaylistEditorView(
     }
 
     // Focused 3-Button Winamp Context Bar (ADR-019 / ADR-020: [REM] [MISC] [LIST])
-    Row(
-      modifier = Modifier.fillMaxWidth(),
-      horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
+    if (showBottomActionBar) {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+      ) {
       Box(modifier = Modifier.weight(1f)) {
         BeveledButton(
           label = "REM",
@@ -393,6 +416,7 @@ fun PlaylistEditorView(
             ),
           onDismiss = onDismissMicroMenu,
         )
+      }
       }
     }
   }

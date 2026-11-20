@@ -18,7 +18,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -43,15 +42,13 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.droidamp.player.domain.model.RestingLayoutVariant
 import com.droidamp.player.domain.model.StorageBackend
 import com.droidamp.player.skin.ClassicDroidAmpSkin
 import com.droidamp.player.skin.LocalDroidAmpSkin
 import com.droidamp.player.ui.deck.MainDeckPanel
 import com.droidamp.player.ui.eq.EqualizerPanel
-import com.droidamp.player.ui.sheet.ExpandedPlaylistLibrarySheet
-import com.droidamp.player.ui.sheet.PeekingDrawerSurface
 import com.droidamp.player.ui.sheet.SavePlaylistDialog
+import com.droidamp.player.ui.sheet.UnifiedQueueLibraryPanel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -179,9 +176,8 @@ fun DroidAmpRackScreen(
   }
 
   val hasLinkedRoots = linkedRoots.isNotEmpty()
-  val isOptionA = uiState.restingLayoutVariant == RestingLayoutVariant.OPTION_A_SLIM_LIP
 
-  // ADR-020: Android Back steps up inside LIBRARY before collapsing the drawer
+  // ADR-020: Android Back steps up inside LIBRARY before panning back to the Deck + EQ
   BackHandler(enabled = uiState.isSheetExpanded) {
     viewModel.onBackPressedInExpandedSheet()
   }
@@ -194,210 +190,199 @@ fun DroidAmpRackScreen(
         .statusBarsPadding(),
   ) {
     val fullHeightPx = constraints.maxHeight.toFloat().coerceAtLeast(1f)
-    var instrumentHeightPx by remember { mutableFloatStateOf(fullHeightPx * 0.65f) }
-    val minSlimLipPx = with(density) { 108.dp.toPx() }
-    val minTabPeekPx = with(density) { 176.dp.toPx() }
+    val minBrowserHeightPx = with(density) { 180.dp.toPx() }
+    var instrumentHeightPx by remember { mutableFloatStateOf((fullHeightPx - minBrowserHeightPx).coerceAtLeast(1f)) }
 
-    val collapsedTopPx =
-      if (isOptionA) {
-        maxOf(instrumentHeightPx, fullHeightPx - minSlimLipPx).coerceIn(0f, fullHeightPx - minSlimLipPx)
-      } else {
-        instrumentHeightPx.coerceIn(0f, (fullHeightPx - minTabPeekPx).coerceAtLeast(0f))
-      }
+    // Maximum vertical pan distance = full height of Main Deck + EQ + bezel buffer
+    val maxPanPx = instrumentHeightPx.coerceIn(1f, (fullHeightPx - minBrowserHeightPx).coerceAtLeast(1f))
 
-    val sheetOffsetY = remember { Animatable(collapsedTopPx) }
+    // Stereo-Tower Camera Pan offset:
+    // 0f        = Resting (looking at top of stereo: Main Deck + EQ + live Queue/Library below)
+    // maxPanPx  = Expanded (panned down to bottom of stereo: Main Deck + EQ smoothly above viewport)
+    val panOffsetPx = remember { Animatable(0f) }
 
-    LaunchedEffect(uiState.isSheetExpanded, collapsedTopPx) {
-      val target = if (uiState.isSheetExpanded) 0f else collapsedTopPx
-      sheetOffsetY.animateTo(
+    LaunchedEffect(uiState.isSheetExpanded, maxPanPx) {
+      val target = if (uiState.isSheetExpanded) maxPanPx else 0f
+      panOffsetPx.animateTo(
         targetValue = target,
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
       )
     }
 
-    val onDrawerDragDelta: (Float) -> Unit = { delta ->
+    // Drag delta is screen-space Y (negative = dragging finger UP -> increases panOffsetPx)
+    val onStereoPanDelta: (Float) -> Unit = { dragDeltaY ->
       scope.launch {
-        val next = (sheetOffsetY.value + delta).coerceIn(0f, collapsedTopPx)
-        sheetOffsetY.snapTo(next)
+        val next = (panOffsetPx.value - dragDeltaY).coerceIn(0f, maxPanPx)
+        panOffsetPx.snapTo(next)
       }
     }
 
-    val onDrawerDragFinished: (Float) -> Unit = { totalDrag ->
-      val progress =
-        if (collapsedTopPx > 1f) 1f - (sheetOffsetY.value / collapsedTopPx) else 1f
+    val onStereoPanFinished: (Float) -> Unit = { totalDragY ->
+      val progress = (panOffsetPx.value / maxPanPx).coerceIn(0f, 1f)
       val shouldExpand =
         if (uiState.isSheetExpanded) {
-          // Collapse if dragged down > 18% of travel or > 96px
-          !(progress < 0.82f || totalDrag > 96f)
+          // Collapse if dragged down > 18% of travel or > 80px downward
+          !(progress < 0.82f || totalDragY > 80f)
         } else {
-          // Expand if dragged up > 18% of travel or < -72px
-          progress > 0.18f || totalDrag < -72f
+          // Expand if dragged up > 18% of travel or < -64px upward
+          progress > 0.18f || totalDragY < -64f
         }
       if (shouldExpand) {
         viewModel.expandSheetRememberedMode()
         scope.launch {
-          sheetOffsetY.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow))
+          panOffsetPx.animateTo(maxPanPx, spring(stiffness = Spring.StiffnessMediumLow))
         }
       } else {
         viewModel.collapseSheet()
         scope.launch {
-          sheetOffsetY.animateTo(collapsedTopPx, spring(stiffness = Spring.StiffnessMediumLow))
+          panOffsetPx.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow))
         }
       }
     }
 
-    // Background Plane: The Instrument (Main Deck + Collapsible 10-Band EQ, open by default)
-    Column(modifier = Modifier.fillMaxSize()) {
-      Column(
+    val currentPan = panOffsetPx.value.coerceIn(0f, maxPanPx)
+    val browserTopPx = (maxPanPx - currentPan).coerceAtLeast(0f)
+    val browserHeightDp = with(density) { (fullHeightPx - browserTopPx).coerceAtLeast(minBrowserHeightPx).toDp() }
+
+    // Top Stereo Section: Main Deck + Collapsible EQ + non-interactive swipe buffer
+    // Translates smoothly UP and out of viewport together with the browser below (ADR-023)
+    Column(
+      modifier =
+        Modifier
+          .fillMaxWidth()
+          .offset { IntOffset(0, (-currentPan).roundToInt()) }
+          .onGloballyPositioned { coords ->
+            val h = coords.size.height.toFloat()
+            if (h > 0f) instrumentHeightPx = h
+          },
+    ) {
+      MainDeckPanel(
+        playbackState = playbackState,
+        visualizerFrameProvider = { visualizerFrameState.value },
+        isEqVisible = uiState.isEqVisible,
+        isSheetExpanded = uiState.isSheetExpanded,
+        onToggleTimeMode = viewModel::toggleTimeDisplayMode,
+        onCycleVisualizerMode = viewModel::cycleVisualizerMode,
+        onVolumeChange = viewModel::setVolume,
+        onBalanceChange = viewModel::setBalance,
+        onSeekTo = viewModel::seekTo,
+        onPrev = viewModel::previous,
+        onPlay = viewModel::play,
+        onPause = viewModel::pause,
+        onStop = viewModel::stop,
+        onNext = viewModel::next,
+        onEject = viewModel::onEjectPressed,
+        onToggleShuffle = viewModel::toggleShuffle,
+        onCycleRepeat = viewModel::cycleRepeatMode,
+        onToggleEqVisible = viewModel::toggleEqVisible,
+        onTogglePlaylistSheet = viewModel::onQueueButtonPressed,
+        spaciousMode = false,
+      )
+
+      AnimatedVisibility(
+        visible = uiState.isEqVisible,
+        enter = expandVertically(),
+        exit = shrinkVertically(),
+      ) {
+        EqualizerPanel(
+          eqState = playbackState.equalizer,
+          onToggleEnabled = viewModel::toggleEqEnabled,
+          onToggleAuto = viewModel::toggleEqAuto,
+          onPreampChange = viewModel::setPreampDb,
+          onBandChange = viewModel::setEqBandDb,
+          onApplyPreset = viewModel::applyEqPreset,
+          availablePresets = uiState.availableEqPresets,
+          autoEqStatusReadout = uiState.autoEqFeedbackMessage,
+          sliderBankHeight = 132.dp,
+        )
+      }
+
+      // Non-interactive chassis bezel buffer separating EQ bottom from Queue/Library titlebar
+      Box(
         modifier =
           Modifier
             .fillMaxWidth()
-            .onGloballyPositioned { coords ->
-              val h = coords.size.height.toFloat()
-              if (h > 0f) instrumentHeightPx = h
-            },
-      ) {
-        MainDeckPanel(
-          playbackState = playbackState,
-          visualizerFrameProvider = { visualizerFrameState.value },
-          isEqVisible = uiState.isEqVisible,
-          isSheetExpanded = uiState.isSheetExpanded,
-          onToggleTimeMode = viewModel::toggleTimeDisplayMode,
-          onCycleVisualizerMode = viewModel::cycleVisualizerMode,
-          onVolumeChange = viewModel::setVolume,
-          onBalanceChange = viewModel::setBalance,
-          onSeekTo = viewModel::seekTo,
-          onPrev = viewModel::previous,
-          onPlay = viewModel::play,
-          onPause = viewModel::pause,
-          onStop = viewModel::stop,
-          onNext = viewModel::next,
-          onEject = viewModel::onEjectPressed,
-          onToggleShuffle = viewModel::toggleShuffle,
-          onCycleRepeat = viewModel::cycleRepeatMode,
-          onToggleEqVisible = viewModel::toggleEqVisible,
-          onTogglePlaylistSheet = viewModel::onQueueButtonPressed,
-          spaciousMode = isOptionA,
-          layoutVariantLabel = if (isOptionA) "UI:A" else "UI:B",
-          onToggleLayoutVariant = viewModel::toggleRestingLayoutVariant,
-        )
-
-        AnimatedVisibility(
-          visible = uiState.isEqVisible,
-          enter = expandVertically(),
-          exit = shrinkVertically(),
-        ) {
-          EqualizerPanel(
-            eqState = playbackState.equalizer,
-            onToggleEnabled = viewModel::toggleEqEnabled,
-            onToggleAuto = viewModel::toggleEqAuto,
-            onPreampChange = viewModel::setPreampDb,
-            onBandChange = viewModel::setEqBandDb,
-            onApplyPreset = viewModel::applyEqPreset,
-            availablePresets = uiState.availableEqPresets,
-            autoEqStatusReadout = uiState.autoEqFeedbackMessage,
-            sliderBankHeight = if (isOptionA) 152.dp else 132.dp,
-          )
-        }
-      }
-      Spacer(modifier = Modifier.weight(1f))
+            .height(skin.metrics.sheetSwipeBufferHeight)
+            .background(skin.chassis.panelSurfaceAlt),
+      )
     }
 
-    // Foreground Plane: 1:1 Finger-Tracking Drawer (ADR-018)
-    val expansionFraction =
-      if (collapsedTopPx > 1f) (1f - (sheetOffsetY.value / collapsedTopPx)).coerceIn(0f, 1f) else 1f
-    val showExpandedContent = uiState.isSheetExpanded || expansionFraction > 0.12f
-
+    // Bottom Stereo Section: Always-live, always-interactive Queue / Library Panel
+    // Docked directly beneath the bezel buffer and grows seamlessly to full height as the tower pans up
     Box(
       modifier =
         Modifier
-          .fillMaxSize()
-          .offset { IntOffset(0, sheetOffsetY.value.roundToInt()) },
+          .fillMaxWidth()
+          .height(browserHeightDp)
+          .offset { IntOffset(0, browserTopPx.roundToInt()) },
     ) {
-      if (showExpandedContent) {
-        ExpandedPlaylistLibrarySheet(
-          sheetMode = uiState.sheetMode,
-          hasLinkedRoots = hasLinkedRoots,
-          playbackState = playbackState,
-          selectedPlaylistIndices = uiState.selectedPlaylistIndices,
-          showJumpFilter = uiState.showJumpFilter,
-          jumpFilterQuery = uiState.jumpFilterQuery,
-          activeMicroMenu = uiState.activeMicroMenu,
-          showClearQueueConfirm = uiState.showClearQueueConfirm,
-          libraryViewLevel = uiState.libraryViewLevel,
-          folderContents = uiState.folderContents,
-          playlists = uiState.playlists,
-          selectedLibraryTrackIds = uiState.selectedLibraryTrackIds,
-          selectedPlaylistId = uiState.selectedLibraryPlaylistId,
-          libraryFeedbackBanner = uiState.libraryFeedbackBanner,
-          queueFeedbackPulseCount = uiState.queueFeedbackPulseCount,
-          onCollapse = viewModel::collapseSheet,
-          onDragDelta = onDrawerDragDelta,
-          onDragFinished = onDrawerDragFinished,
-          onSelectMusicFolder = triggerSelectMusicFolder,
-          onSwitchSheetMode = viewModel::switchSheetMode,
-          onPlaylistTrackClick = viewModel::onPlaylistTrackClick,
-          onPlaylistTrackDoubleClick = viewModel::onPlaylistTrackDoubleClick,
-          onMoveTrackUp = { idx -> viewModel.movePlaylistTrack(idx, idx - 1) },
-          onMoveTrackDown = { idx -> viewModel.movePlaylistTrack(idx, idx + 1) },
-          onJumpFilterChange = viewModel::onJumpFilterQueryChange,
-          onToggleJumpFilter = viewModel::toggleJumpFilter,
-          onOpenMicroMenu = viewModel::openMicroMenu,
-          onDismissMicroMenu = viewModel::dismissMicroMenu,
-          onRemoveSelected = viewModel::removeSelectedPlaylistTracks,
-          onCropSelected = viewModel::cropSelectedPlaylistTracks,
-          onRequestClearQueue = viewModel::requestClearQueue,
-          onConfirmClearQueue = viewModel::confirmClearQueue,
-          onDismissClearQueueConfirm = viewModel::dismissClearQueueConfirm,
-          onSortQueue = viewModel::sortPlaylist,
-          onReverseQueue = viewModel::reversePlaylist,
-          onRandomizeQueue = viewModel::randomizePlaylist,
-          onNewQueue = viewModel::requestClearQueue,
-          onSavePlaylist = viewModel::openSavePlaylistDialog,
-          onLoadPlaylist = viewModel::onLoadPlaylistShortcut,
-          onOpenLibraryRoot = viewModel::openLibraryRoot,
-          onOpenLibraryFolders = viewModel::openLibraryFolders,
-          onOpenLibraryPlaylists = viewModel::openLibraryPlaylists,
-          onNavigateUp = viewModel::navigateFolderUp,
-          onOpenFolder = viewModel::openFolder,
-          onPlayFolder = viewModel::playFolderAsPlaylist,
-          onEnqueueFolder = viewModel::enqueueFolder,
-          onPlayCurrentFolder = viewModel::playCurrentFolder,
-          onEnqueueCurrentFolder = viewModel::enqueueCurrentFolder,
-          onToggleLibraryTrackSelection = viewModel::toggleLibraryTrackSelection,
-          onPlayLibraryTrack = viewModel::playSingleLibraryTrack,
-          onEnqueueLibraryTrack = viewModel::enqueueSingleLibraryTrack,
-          onSelectLibraryPlaylist = viewModel::selectLibraryPlaylist,
-          onPlayLibraryPlaylist = viewModel::playSavedPlaylist,
-          onEnqueueLibraryPlaylist = viewModel::enqueueSavedPlaylist,
-          onPlayPrimaryLibrarySelection = viewModel::playPrimaryLibrarySelection,
-          onEnqueuePrimaryLibrarySelection = viewModel::enqueuePrimaryLibrarySelection,
-          onClearLibrarySelection = viewModel::clearLibrarySelection,
-          onPrev = viewModel::previous,
-          onPlay = viewModel::play,
-          onPause = viewModel::pause,
-          onStop = viewModel::stop,
-          onNext = viewModel::next,
-          onMoveTrack = viewModel::movePlaylistTrack,
-        )
-      } else {
-        val peekHeightDp = with(density) { (fullHeightPx - collapsedTopPx).coerceAtLeast(minSlimLipPx).toDp() }
-        PeekingDrawerSurface(
-          layoutVariant = uiState.restingLayoutVariant,
-          sheetMode = uiState.sheetMode,
-          libraryViewLevel = uiState.libraryViewLevel,
-          folderContents = uiState.folderContents,
-          playlists = uiState.playlists,
-          hasLinkedRoots = hasLinkedRoots,
-          playbackState = playbackState,
-          onExpand = viewModel::expandSheetRememberedMode,
-          onSwitchSheetMode = viewModel::switchSheetMode,
-          onSelectMusicFolder = triggerSelectMusicFolder,
-          onDragDelta = onDrawerDragDelta,
-          onDragFinished = onDrawerDragFinished,
-          modifier = Modifier.fillMaxWidth().height(peekHeightDp),
-        )
-      }
+      UnifiedQueueLibraryPanel(
+        isExpanded = uiState.isSheetExpanded,
+        sheetMode = uiState.sheetMode,
+        hasLinkedRoots = hasLinkedRoots,
+        playbackState = playbackState,
+        selectedPlaylistIndices = uiState.selectedPlaylistIndices,
+        showJumpFilter = uiState.showJumpFilter,
+        jumpFilterQuery = uiState.jumpFilterQuery,
+        activeMicroMenu = uiState.activeMicroMenu,
+        showClearQueueConfirm = uiState.showClearQueueConfirm,
+        libraryViewLevel = uiState.libraryViewLevel,
+        folderContents = uiState.folderContents,
+        playlists = uiState.playlists,
+        selectedLibraryTrackIds = uiState.selectedLibraryTrackIds,
+        selectedPlaylistId = uiState.selectedLibraryPlaylistId,
+        libraryFeedbackBanner = uiState.libraryFeedbackBanner,
+        queueFeedbackPulseCount = uiState.queueFeedbackPulseCount,
+        onToggleExpand = viewModel::toggleSheetExpanded,
+        onDragDelta = onStereoPanDelta,
+        onDragFinished = onStereoPanFinished,
+        canPullDownToCollapse = { panOffsetPx.value > 0.5f },
+        onSelectMusicFolder = triggerSelectMusicFolder,
+        onSwitchSheetMode = viewModel::switchSheetMode,
+        onPlaylistTrackClick = viewModel::onPlaylistTrackClick,
+        onPlaylistTrackDoubleClick = viewModel::onPlaylistTrackDoubleClick,
+        onMoveTrackUp = { idx -> viewModel.movePlaylistTrack(idx, idx - 1) },
+        onMoveTrackDown = { idx -> viewModel.movePlaylistTrack(idx, idx + 1) },
+        onJumpFilterChange = viewModel::onJumpFilterQueryChange,
+        onToggleJumpFilter = viewModel::toggleJumpFilter,
+        onOpenMicroMenu = viewModel::openMicroMenu,
+        onDismissMicroMenu = viewModel::dismissMicroMenu,
+        onRemoveSelected = viewModel::removeSelectedPlaylistTracks,
+        onCropSelected = viewModel::cropSelectedPlaylistTracks,
+        onRequestClearQueue = viewModel::requestClearQueue,
+        onConfirmClearQueue = viewModel::confirmClearQueue,
+        onDismissClearQueueConfirm = viewModel::dismissClearQueueConfirm,
+        onSortQueue = viewModel::sortPlaylist,
+        onReverseQueue = viewModel::reversePlaylist,
+        onRandomizeQueue = viewModel::randomizePlaylist,
+        onNewQueue = viewModel::requestClearQueue,
+        onSavePlaylist = viewModel::openSavePlaylistDialog,
+        onLoadPlaylist = viewModel::onLoadPlaylistShortcut,
+        onOpenLibraryRoot = viewModel::openLibraryRoot,
+        onOpenLibraryFolders = viewModel::openLibraryFolders,
+        onOpenLibraryPlaylists = viewModel::openLibraryPlaylists,
+        onNavigateUp = viewModel::navigateFolderUp,
+        onOpenFolder = viewModel::openFolder,
+        onPlayFolder = viewModel::playFolderAsPlaylist,
+        onEnqueueFolder = viewModel::enqueueFolder,
+        onPlayCurrentFolder = viewModel::playCurrentFolder,
+        onEnqueueCurrentFolder = viewModel::enqueueCurrentFolder,
+        onToggleLibraryTrackSelection = viewModel::toggleLibraryTrackSelection,
+        onPlayLibraryTrack = viewModel::playSingleLibraryTrack,
+        onEnqueueLibraryTrack = viewModel::enqueueSingleLibraryTrack,
+        onSelectLibraryPlaylist = viewModel::selectLibraryPlaylist,
+        onPlayLibraryPlaylist = viewModel::playSavedPlaylist,
+        onEnqueueLibraryPlaylist = viewModel::enqueueSavedPlaylist,
+        onPlayPrimaryLibrarySelection = viewModel::playPrimaryLibrarySelection,
+        onEnqueuePrimaryLibrarySelection = viewModel::enqueuePrimaryLibrarySelection,
+        onClearLibrarySelection = viewModel::clearLibrarySelection,
+        onPrev = viewModel::previous,
+        onPlay = viewModel::play,
+        onPause = viewModel::pause,
+        onStop = viewModel::stop,
+        onNext = viewModel::next,
+        onMoveTrack = viewModel::movePlaylistTrack,
+      )
     }
 
     if (uiState.showSavePlaylistDialog) {

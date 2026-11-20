@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -111,13 +112,14 @@ fun LibraryBrowserView(
           }
       val isFeedback = libraryFeedbackBanner != null
 
+      // Fixed-height breadcrumb bar (doubles as 2s enqueue confirmation well with ZERO layout shift)
       RecessedWell(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().height(32.dp),
         backgroundColor = if (isFeedback) skin.vfd.wellBackground else skin.playlist.breadcrumbBackground,
-        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
       ) {
         Row(
-          modifier = Modifier.fillMaxWidth(),
+          modifier = Modifier.fillMaxSize(),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -137,7 +139,8 @@ fun LibraryBrowserView(
             BeveledButton(
               label = "▶ ALL",
               onClick = onPlayCurrentFolder,
-              contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+              modifier = Modifier.height(24.dp),
+              contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
             )
             BeveledButton(
               label = "+ ALL",
@@ -145,7 +148,8 @@ fun LibraryBrowserView(
                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onEnqueueCurrentFolder()
               },
-              contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+              modifier = Modifier.height(24.dp),
+              contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
             )
           }
         }
@@ -272,7 +276,8 @@ fun LibraryBrowserView(
                   BeveledButton(
                     label = "▶",
                     onClick = { onPlayFolder(folder) },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.size(width = 32.dp, height = 28.dp),
+                    contentPadding = PaddingValues(0.dp),
                   )
                   Spacer(Modifier.width(4.dp))
                   BeveledButton(
@@ -281,7 +286,8 @@ fun LibraryBrowserView(
                       haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                       onEnqueueFolder(folder)
                     },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.size(width = 32.dp, height = 28.dp),
+                    contentPadding = PaddingValues(0.dp),
                   )
                 }
               }
@@ -333,7 +339,8 @@ fun LibraryBrowserView(
                   BeveledButton(
                     label = "▶",
                     onClick = { onPlayTrack(track) },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.size(width = 32.dp, height = 28.dp),
+                    contentPadding = PaddingValues(0.dp),
                   )
                   Spacer(Modifier.width(4.dp))
                   BeveledButton(
@@ -342,7 +349,8 @@ fun LibraryBrowserView(
                       haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                       onEnqueueTrack(track)
                     },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.size(width = 32.dp, height = 28.dp),
+                    contentPadding = PaddingValues(0.dp),
                   )
                 }
               }
@@ -433,7 +441,8 @@ fun LibraryBrowserView(
                     BeveledButton(
                       label = "▶",
                       onClick = { onPlayPlaylist(pl) },
-                      contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                      modifier = Modifier.size(width = 32.dp, height = 28.dp),
+                      contentPadding = PaddingValues(0.dp),
                     )
                     Spacer(Modifier.width(4.dp))
                     BeveledButton(
@@ -442,7 +451,8 @@ fun LibraryBrowserView(
                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         onEnqueuePlaylist(pl)
                       },
-                      contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                      modifier = Modifier.size(width = 32.dp, height = 28.dp),
+                      contentPadding = PaddingValues(0.dp),
                     )
                   }
                 }
