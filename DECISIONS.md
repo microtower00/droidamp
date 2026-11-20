@@ -98,3 +98,38 @@ This log records the key product, UX, and engineering decisions made during the 
   - Implement Winamp import/export engines (`.eqf`, `winamp.q1`/`q2`, `winamp.ini`, `.m3u`/`.m3u8`/`.pls`) cleanly in the domain/data layer without exposing them in the UI yet.
   - Defer the **Settings** UI (post-onboarding folder re-selection, SAF/MediaStore toggle, ReplayGain/Crossfade/Gapless controls, Winamp import/export triggers, `.wsz` skin selector) to the final milestone.
 - **Rationale**: Keeps early milestones laser-focused on core audio playback, DSP fidelity, and the hardware rack UX before designing a cohesive Settings interface once all underlying capabilities exist.
+
+## ADR-013: Dependencies & Open-Source Licensing Guardrail
+- **Date**: 2026-11-20
+- **Status**: Accepted
+- **Decision**:
+  - Never add third-party libraries beyond the already-specified AndroidX/Media3/DocumentFile/DataStore stack without explicit user approval.
+  - Reuse open-source code only when permitted by its license, and record source/license attribution for credits (DroidAmp is non-monetized).
+  - All Milestone 2–4 DSP, storage, and Winamp codec implementations were written from scratch in pure Kotlin with zero additional dependencies.
+- **Rationale**: Keeps the dependency footprint minimal, offline-auditable, and legally clean.
+
+## ADR-014: Milestone 4 Wiring into Existing M1 Controls (Refines ADR-012)
+- **Date**: 2026-11-20
+- **Status**: Accepted
+- **Decision**:
+  - Wire Milestone 4's `AUTO` EQ matching (`AutoEqMatcher` + `AndroidAutoEqCatalogProvider`), expanded 18 classic Winamp presets (`ClassicWinampPresets.ALL`), and `[LIST] -> SAVE .M3U8` export into the existing Milestone 1 Deck/EQ/Playlist buttons immediately.
+  - Keep the dedicated **Settings** UI deferred to Milestone 6.
+- **Rationale**: Eliminates dead stubs on already-built Milestone 1 controls (`AUTO`, `PRESETS`, `[LIST] -> Save`) so users can exercise real Winamp interop immediately without prematurely building Settings chrome.
+
+## ADR-015: Pre-Settings DSP Defaults & DataStore Persistence Scope
+- **Date**: 2026-11-20
+- **Status**: Accepted *(Autonomous team decision authorized during M2–M4 interview)*
+- **Decision**:
+  - **Default `DspSettings`**: `gaplessEnabled = true`, `crossfadeSeconds = 0` (off; configurable `0..12s`), `replayGainMode = ReplayGainMode.OFF`, `replayGainPreampDb = 0f` (`-15..+15 dB`), `DEFAULT_COLD_LAUNCH_VOLUME = 204` (~80% on 40 dB logarithmic taper).
+  - **Persistence via DataStore Preferences** (`DspPreferencesStore` & `StoragePreferencesStore`, with `ReplaceFileCorruptionHandler` fallback): persist SAF tree URIs, DSP settings, EQ state, balance, shuffle, repeat mode, visualizer mode, and time display mode across restarts. Keep the active playback queue in-memory until Milestone 6; continue resetting internal volume to `204` only on cold launch when `STOPPED`.
+- **Rationale**: Delivers safe, studio-neutral audio out of the box (gapless on, no surprise crossfading or ReplayGain shifts) and remembers user preferences across restarts without over-engineering queue serialization before Milestone 6.
+
+## ADR-016: Process-Scoped Manual DI Container & Media3 Foreground Service Ownership
+- **Date**: 2026-11-20
+- **Status**: Accepted *(Autonomous engineering decision during M2–M4)*
+- **Decision**:
+  - Use a lightweight process-scoped `DroidAmpAppContainer` singleton (no Hilt/Dagger dependency) to own `Media3AudioEngineController`, `SwitchingMusicSourceRepository`, and Winamp codecs across Activity recreations.
+  - Declare `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `POST_NOTIFICATIONS`, `READ_MEDIA_AUDIO`, and `READ_EXTERNAL_STORAGE (maxSdkVersion="32")` in `AndroidManifest.xml` while retaining `ACCESS_NETWORK_STATE tools:node="remove"`.
+  - Register `MediaSession` via `addSession(createdSession)` in `DroidAmpPlaybackService.onCreate()` and delegate foreground promotion solely to Media3's `MediaNotificationManager` (avoiding manual `ContextCompat.startForegroundService()` calls that caused a foreground-service ANR on device).
+  - Add `/The Doors - L.A. Woman.mp3` to `.gitignore` so the local verification fixture stays untracked.
+- **Rationale**: Keeps dependency count at zero beyond AndroidX/Media3, ensures MediaStore is ready behind the storage abstraction while SAF stays default, and guarantees ANR-free Android foreground media playback.

@@ -19,6 +19,9 @@ Read [DESIGN.md](DESIGN.md) and [DECISIONS.md](DECISIONS.md) before making archi
 7. **Storage & Settings Scoping**:
    - Keep `MusicSourceRepository` storage-agnostic with **SAF as default** and **MediaStore** as an optional backend.
    - Implement Winamp format parsers/exporters (`.eqf`, `winamp.q1`/`q2`, `winamp.ini`, `.m3u`/`.m3u8`/`.pls`) cleanly in the domain/data layer first; keep Settings UI deferred until Milestone 6.
+8. **Dependencies & Open-Source Licensing**:
+   - Never add third-party libraries beyond the already-specified AndroidX/Media3/DocumentFile/DataStore stack without asking the user for explicit permission first.
+   - Open-source code may only be copied or reused if permitted by its license; record source and license attribution so proper credits can be given (DroidAmp is a non-monetized project).
 
 ## Project Identity & Commands
 
