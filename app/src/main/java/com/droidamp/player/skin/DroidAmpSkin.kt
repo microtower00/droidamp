@@ -133,6 +133,25 @@ data class SkinSprites(
   val eqSliderFrames: List<ImageBitmap> = emptyList(), // up to 28 vertical frames
   val eqThumb: ImageBitmap? = null,
   val titleBarActive: ImageBitmap? = null,
+  val eqTitleBarActive: ImageBitmap? = null,
+  val shuffleOff: ImageBitmap? = null,
+  val shuffleOn: ImageBitmap? = null,
+  val repeatOff: ImageBitmap? = null,
+  val repeatOn: ImageBitmap? = null,
+  val eqButtonOff: ImageBitmap? = null,
+  val eqButtonOn: ImageBitmap? = null,
+  val plButtonOff: ImageBitmap? = null,
+  val plButtonOn: ImageBitmap? = null,
+  val eqOnOff: ImageBitmap? = null,
+  val eqOnOn: ImageBitmap? = null,
+  val eqAutoOff: ImageBitmap? = null,
+  val eqAutoOn: ImageBitmap? = null,
+  val eqPresetsNormal: ImageBitmap? = null,
+  val eqPresetsPressed: ImageBitmap? = null,
+  val monoActive: ImageBitmap? = null,
+  val monoInactive: ImageBitmap? = null,
+  val stereoActive: ImageBitmap? = null,
+  val stereoInactive: ImageBitmap? = null,
 )
 
 @Immutable

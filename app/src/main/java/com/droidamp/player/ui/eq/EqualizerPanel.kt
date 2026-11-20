@@ -82,7 +82,10 @@ fun EqualizerPanel(
 
   HardwarePanel(modifier = modifier.fillMaxWidth()) {
     Column(modifier = Modifier.fillMaxWidth()) {
-      ChassisTitleBar(title = "DROIDAMP EQUALIZER")
+      ChassisTitleBar(
+        title = "DROIDAMP EQUALIZER",
+        customSprite = skin.sprites.eqTitleBarActive ?: skin.sprites.titleBarActive,
+      )
 
       Column(
         modifier = Modifier.fillMaxWidth().padding(skin.metrics.panelPadding),
@@ -99,14 +102,18 @@ fun EqualizerPanel(
             checked = eqState.enabled,
             onClick = onToggleEnabled,
             compact = true,
-            modifier = Modifier.height(28.dp),
+            spriteOff = skin.sprites.eqOnOff,
+            spriteOn = skin.sprites.eqOnOn,
+            modifier = Modifier.height(28.dp).let { if (skin.sprites.eqOnOff != null) it.width(46.dp) else it },
           )
           BeveledLedToggleButton(
             label = "AUTO",
             checked = eqState.autoEnabled,
             onClick = onToggleAuto,
             compact = true,
-            modifier = Modifier.height(28.dp),
+            spriteOff = skin.sprites.eqAutoOff,
+            spriteOn = skin.sprites.eqAutoOn,
+            modifier = Modifier.height(28.dp).let { if (skin.sprites.eqAutoOff != null) it.width(56.dp) else it },
           )
 
           // Recessed VFD EQ Spline Graph + transient drag readout overlay
@@ -150,7 +157,9 @@ fun EqualizerPanel(
             BeveledButton(
               label = "PRESETS",
               onClick = { showPresetsMenu = true },
-              modifier = Modifier.height(28.dp),
+              spriteNormal = skin.sprites.eqPresetsNormal,
+              spritePressed = skin.sprites.eqPresetsPressed,
+              modifier = Modifier.height(28.dp).let { if (skin.sprites.eqPresetsNormal != null) it.width(74.dp) else it },
               contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
             )
             RetroMicroMenuPopup(

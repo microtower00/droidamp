@@ -276,7 +276,7 @@ fun LibraryBrowserView(
                   Text(
                     text = "[..]  BACK TO LIBRARY",
                     style = skin.typography.trackRow,
-                    color = skin.playlist.breadcrumbText,
+                    color = skin.playlist.currentText,
                   )
                 }
               }
@@ -369,7 +369,7 @@ fun LibraryBrowserView(
                         "[..]  BACK TO LIBRARY"
                       },
                     style = skin.typography.trackRow,
-                    color = skin.playlist.breadcrumbText,
+                    color = skin.playlist.currentText,
                   )
                 }
               }
@@ -503,7 +503,7 @@ fun LibraryBrowserView(
                   Text(
                     text = "[..]  BACK TO LIBRARY",
                     style = skin.typography.trackRow,
-                    color = skin.playlist.breadcrumbText,
+                    color = skin.playlist.currentText,
                   )
                 }
               }

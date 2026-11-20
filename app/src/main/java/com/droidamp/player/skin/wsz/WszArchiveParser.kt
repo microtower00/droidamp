@@ -32,6 +32,8 @@ object WszArchiveParser {
       "main.bmp",
       "cbuttons.bmp",
       "playpaus.bmp",
+      "shufrep.bmp",
+      "monoster.bmp",
       "nums_ex.bmp",
       "numbers.bmp",
       "volume.bmp",

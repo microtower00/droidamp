@@ -48,6 +48,31 @@ object WszSpriteCoordinates {
   // titlebar.bmp (344x87) -> Active main titlebar strip
   val TITLEBAR_ACTIVE = SpriteRect(27, 0, 275, 14)
 
+  // eqmain.bmp (275x315) -> Active EQ titlebar, ON/AUTO toggles, PRESETS button
+  val EQ_TITLEBAR_ACTIVE = SpriteRect(0, 134, 275, 14)
+  val EQ_ON_OFF = SpriteRect(10, 119, 25, 12)
+  val EQ_ON_ON = SpriteRect(69, 119, 25, 12)
+  val EQ_AUTO_OFF = SpriteRect(35, 119, 33, 12)
+  val EQ_AUTO_ON = SpriteRect(94, 119, 33, 12)
+  val EQ_PRESETS_NORMAL = SpriteRect(224, 164, 44, 12)
+  val EQ_PRESETS_PRESSED = SpriteRect(224, 176, 44, 12)
+
+  // shufrep.bmp (92x85)
+  val REPEAT_OFF = SpriteRect(0, 0, 28, 15)
+  val REPEAT_ON = SpriteRect(0, 30, 28, 15)
+  val SHUFFLE_OFF = SpriteRect(28, 0, 47, 15)
+  val SHUFFLE_ON = SpriteRect(28, 30, 47, 15)
+  val EQ_BTN_OFF = SpriteRect(0, 61, 23, 12)
+  val EQ_BTN_ON = SpriteRect(0, 73, 23, 12)
+  val PL_BTN_OFF = SpriteRect(23, 61, 23, 12)
+  val PL_BTN_ON = SpriteRect(23, 73, 23, 12)
+
+  // monoster.bmp (58x24)
+  val STEREO_ACTIVE = SpriteRect(0, 0, 29, 12)
+  val STEREO_INACTIVE = SpriteRect(0, 12, 29, 12)
+  val MONO_ACTIVE = SpriteRect(29, 0, 29, 12)
+  val MONO_INACTIVE = SpriteRect(29, 12, 29, 12)
+
   // posbar.bmp (307x10 or 248x10 without thumb)
   val POSBAR_TRACK = SpriteRect(0, 0, 248, 10)
   val POSBAR_THUMB = SpriteRect(248, 0, 29, 10)
@@ -77,10 +102,17 @@ object WszSpriteCoordinates {
   /**
    * Returns 28 standard frames when `bmpHeight >= 420`, or falls back to dynamic frame count
    * only when a skin provides an unexpected/shorter BMP height.
+   * Note: Winamp `volume.bmp` uses 68px width, whereas `balance.bmp` only uses the left 38px
+   * (the right padding in many skins is bright cyan/white chroma fill).
    */
-  fun volumeOrBalanceFrameRects(bmpWidth: Int, bmpHeight: Int): List<SpriteRect> {
+  fun volumeOrBalanceFrameRects(
+    bmpWidth: Int,
+    bmpHeight: Int,
+    isBalance: Boolean = false,
+  ): List<SpriteRect> {
     if (bmpWidth <= 0 || bmpHeight < SLIDER_FRAME_HEIGHT) return emptyList()
-    val frameW = minOf(68, bmpWidth)
+    val maxSpecWidth = if (isBalance) 38 else 68
+    val frameW = minOf(maxSpecWidth, bmpWidth)
     val frameCount =
       if (bmpHeight >= STANDARD_SLIDER_FRAME_COUNT * SLIDER_FRAME_STRIDE_Y) {
         STANDARD_SLIDER_FRAME_COUNT

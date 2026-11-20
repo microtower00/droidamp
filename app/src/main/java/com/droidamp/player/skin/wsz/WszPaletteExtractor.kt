@@ -7,6 +7,7 @@ import com.droidamp.player.skin.ClassicDroidAmpSkin
 import com.droidamp.player.skin.PlaylistPalette
 import com.droidamp.player.skin.VfdPalette
 import com.droidamp.player.skin.VisualizerPalette
+import kotlin.math.abs
 
 /**
  * Pixel-readable bitmap abstraction decoupling pure-JVM `.wsz` palette & slicing logic
@@ -73,6 +74,11 @@ object WszPaletteExtractor {
     val buttonFacePressed =
       samplePatchColor(cbuttonsBmp, x = 28, y = 22, w = 12, h = 10)
         ?: scaleRgb(buttonFace, 0.78f)
+    val bestButtonInk =
+      pickHighestContrast(
+        buttonFace,
+        listOf(playlist.breadcrumbText, playlist.currentText, playlist.normalText),
+      )
     return BevelPalette(
       highlightOuter = scaleRgb(chassis.panelSurface, 1.55f),
       highlightInner = scaleRgb(chassis.panelSurface, 1.25f),
@@ -82,13 +88,20 @@ object WszPaletteExtractor {
       wellBorderLight = scaleRgb(chassis.panelSurface, 1.38f),
       buttonFace = buttonFace,
       buttonFacePressed = buttonFacePressed,
-      buttonText = playlist.currentText,
+      buttonText = bestButtonInk,
       buttonTextActive = playlist.normalText,
       sliderThumbTop = scaleRgb(buttonFace, 1.45f),
       sliderThumbFace = buttonFace,
       sliderThumbGroove = scaleRgb(buttonFace, 0.45f),
     )
   }
+
+  private fun pickHighestContrast(bg: Color, candidates: List<Color>): Color {
+    val bgLum = luminance(bg)
+    return candidates.maxByOrNull { abs(luminance(it) - bgLum) } ?: Color.White
+  }
+
+  private fun luminance(c: Color): Float = 0.2126f * c.red + 0.7152f * c.green + 0.0722f * c.blue
 
   fun extractVfdPalette(
     visualizer: VisualizerPalette,

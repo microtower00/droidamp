@@ -91,6 +91,8 @@ class WszSkinLoader(
     val titleBarBmp = archive.bytes("titlebar.bmp")?.let(decoder::decode)
     val cbuttonsBmp = archive.bytes("cbuttons.bmp")?.let(decoder::decode)
     val playpausBmp = archive.bytes("playpaus.bmp")?.let(decoder::decode)
+    val shufrepBmp = archive.bytes("shufrep.bmp")?.let(decoder::decode)
+    val monosterBmp = archive.bytes("monoster.bmp")?.let(decoder::decode)
     val numsBmp = (archive.bytes("nums_ex.bmp") ?: archive.bytes("numbers.bmp"))?.let(decoder::decode)
     val volumeBmp = archive.bytes("volume.bmp")?.let(decoder::decode)
     val balanceBmp = (archive.bytes("balance.bmp") ?: archive.bytes("volume.bmp"))?.let(decoder::decode)
@@ -135,8 +137,11 @@ class WszSkinLoader(
 
     val balanceFrames =
       if (balanceBmp != null) {
-        WszSpriteCoordinates.volumeOrBalanceFrameRects(balanceBmp.width, balanceBmp.height)
-          .mapNotNull { rect -> decoder.cropToImageBitmap(balanceBmp, rect) }
+        WszSpriteCoordinates.volumeOrBalanceFrameRects(
+          bmpWidth = balanceBmp.width,
+          bmpHeight = balanceBmp.height,
+          isBalance = true,
+        ).mapNotNull { rect -> decoder.cropToImageBitmap(balanceBmp, rect) }
       } else {
         emptyList()
       }
@@ -156,6 +161,8 @@ class WszSkinLoader(
 
     val titleBarActive =
       titleBarBmp?.let { decoder.cropToImageBitmap(it, WszSpriteCoordinates.TITLEBAR_ACTIVE) }
+    val eqTitleBarActive =
+      eqmainBmp?.let { decoder.cropToImageBitmap(it, WszSpriteCoordinates.EQ_TITLEBAR_ACTIVE) }
 
     val sprites =
       SkinSprites(
@@ -174,6 +181,25 @@ class WszSkinLoader(
         eqSliderFrames = eqFrames,
         eqThumb = eqThumb,
         titleBarActive = titleBarActive,
+        eqTitleBarActive = eqTitleBarActive,
+        shuffleOff = shufrepBmp?.let { decoder.cropToImageBitmap(it, WszSpriteCoordinates.SHUFFLE_OFF) },
+        shuffleOn = shufrepBmp?.let { decoder.cropToImageBitmap(it, WszSpriteCoordinates.SHUFFLE_ON) },
+        repeatOff = shufrepBmp?.let { decoder.cropToImageBitmap(it, WszSpriteCoordinates.REPEAT_OFF) },
+        repeatOn = shufrepBmp?.let { decoder.cropToImageBitmap(it, WszSpriteCoordinates.REPEAT_ON) },
+        eqButtonOff = shufrepBmp?.let { decoder.cropToImageBitmap(it, WszSpriteCoordinates.EQ_BTN_OFF) },
+        eqButtonOn = shufrepBmp?.let { decoder.cropToImageBitmap(it, WszSpriteCoordinates.EQ_BTN_ON) },
+        plButtonOff = shufrepBmp?.let { decoder.cropToImageBitmap(it, WszSpriteCoordinates.PL_BTN_OFF) },
+        plButtonOn = shufrepBmp?.let { decoder.cropToImageBitmap(it, WszSpriteCoordinates.PL_BTN_ON) },
+        eqOnOff = eqmainBmp?.let { decoder.cropToImageBitmap(it, WszSpriteCoordinates.EQ_ON_OFF) },
+        eqOnOn = eqmainBmp?.let { decoder.cropToImageBitmap(it, WszSpriteCoordinates.EQ_ON_ON) },
+        eqAutoOff = eqmainBmp?.let { decoder.cropToImageBitmap(it, WszSpriteCoordinates.EQ_AUTO_OFF) },
+        eqAutoOn = eqmainBmp?.let { decoder.cropToImageBitmap(it, WszSpriteCoordinates.EQ_AUTO_ON) },
+        eqPresetsNormal = eqmainBmp?.let { decoder.cropToImageBitmap(it, WszSpriteCoordinates.EQ_PRESETS_NORMAL) },
+        eqPresetsPressed = eqmainBmp?.let { decoder.cropToImageBitmap(it, WszSpriteCoordinates.EQ_PRESETS_PRESSED) },
+        monoActive = monosterBmp?.let { decoder.cropToImageBitmap(it, WszSpriteCoordinates.MONO_ACTIVE) },
+        monoInactive = monosterBmp?.let { decoder.cropToImageBitmap(it, WszSpriteCoordinates.MONO_INACTIVE) },
+        stereoActive = monosterBmp?.let { decoder.cropToImageBitmap(it, WszSpriteCoordinates.STEREO_ACTIVE) },
+        stereoInactive = monosterBmp?.let { decoder.cropToImageBitmap(it, WszSpriteCoordinates.STEREO_INACTIVE) },
       )
 
     return WszDroidAmpSkin(

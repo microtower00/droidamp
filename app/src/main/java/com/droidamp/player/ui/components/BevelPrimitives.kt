@@ -34,6 +34,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -179,12 +180,12 @@ fun ChassisTitleBar(
   title: String,
   modifier: Modifier = Modifier,
   showDragGrip: Boolean = false,
+  customSprite: ImageBitmap? = LocalDroidAmpSkin.current.sprites.titleBarActive,
   trailingContent: @Composable (() -> Unit)? = null,
 ) {
   val skin = LocalDroidAmpSkin.current
-  val customTitleBar = skin.sprites.titleBarActive
-  if (customTitleBar != null && trailingContent == null && !showDragGrip) {
-    // Render custom `.wsz` titlebar.bmp directly with nearest-neighbor crispness (no text collision)
+  if (customSprite != null && trailingContent == null && !showDragGrip) {
+    // Render custom `.wsz` titlebar directly with nearest-neighbor crispness (no text collision)
     Canvas(
       modifier =
         modifier
@@ -193,7 +194,7 @@ fun ChassisTitleBar(
           .semantics { contentDescription = title },
     ) {
       drawImage(
-        image = customTitleBar,
+        image = customSprite,
         dstOffset = IntOffset.Zero,
         dstSize = IntSize(size.width.toInt().coerceAtLeast(1), size.height.toInt().coerceAtLeast(1)),
         filterQuality = FilterQuality.None,
@@ -272,11 +273,35 @@ fun BeveledButton(
   modifier: Modifier = Modifier,
   enabled: Boolean = true,
   highlighted: Boolean = false,
+  spriteNormal: ImageBitmap? = null,
+  spritePressed: ImageBitmap? = null,
   contentPadding: PaddingValues = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
 ) {
   val skin = LocalDroidAmpSkin.current
   val interactionSource = remember { MutableInteractionSource() }
   val isPressed by interactionSource.collectIsPressedAsState()
+
+  if (spriteNormal != null) {
+    val activeSprite = if (isPressed && spritePressed != null) spritePressed else spriteNormal
+    Box(
+      modifier =
+        modifier
+          .semantics { this.contentDescription = label }
+          .clickable(
+            enabled = enabled,
+            role = Role.Button,
+            interactionSource = interactionSource,
+            indication = null,
+            onClick = onClick,
+          ),
+      contentAlignment = Alignment.Center,
+    ) {
+      Canvas(modifier = Modifier.fillMaxSize()) {
+        drawAspectFitSprite(activeSprite)
+      }
+    }
+    return
+  }
 
   Box(
     modifier =
@@ -331,7 +356,6 @@ fun BeveledIconButton(
     Box(
       modifier =
         modifier
-          .background(skin.bevel.buttonFace)
           .semantics { this.contentDescription = contentDescription }
           .clickable(
             enabled = enabled,
@@ -343,14 +367,7 @@ fun BeveledIconButton(
       contentAlignment = Alignment.Center,
     ) {
       Canvas(modifier = Modifier.fillMaxSize()) {
-        val dstW = size.width.toInt().coerceAtLeast(1)
-        val dstH = size.height.toInt().coerceAtLeast(1)
-        drawImage(
-          image = activeSprite!!,
-          dstOffset = IntOffset.Zero,
-          dstSize = IntSize(dstW, dstH),
-          filterQuality = FilterQuality.None,
-        )
+        drawAspectFitSprite(activeSprite!!)
       }
     }
     return
@@ -395,10 +412,33 @@ fun BeveledLedToggleButton(
   onClick: () -> Unit,
   modifier: Modifier = Modifier,
   compact: Boolean = false,
+  spriteOff: ImageBitmap? = null,
+  spriteOn: ImageBitmap? = null,
 ) {
   val skin = LocalDroidAmpSkin.current
   val interactionSource = remember { MutableInteractionSource() }
   val isPressed by interactionSource.collectIsPressedAsState()
+
+  val activeSprite = if (checked) (spriteOn ?: spriteOff) else spriteOff
+  if (activeSprite != null) {
+    Box(
+      modifier =
+        modifier
+          .semantics { this.contentDescription = label }
+          .clickable(
+            role = Role.Switch,
+            interactionSource = interactionSource,
+            indication = null,
+            onClick = onClick,
+          ),
+      contentAlignment = Alignment.Center,
+    ) {
+      Canvas(modifier = Modifier.fillMaxSize()) {
+        drawAspectFitSprite(activeSprite)
+      }
+    }
+    return
+  }
 
   Row(
     modifier =
@@ -511,4 +551,22 @@ fun RetroMicroMenuPopup(
       }
     }
   }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawAspectFitSprite(
+  sprite: ImageBitmap,
+) {
+  val srcW = sprite.width.toFloat().coerceAtLeast(1f)
+  val srcH = sprite.height.toFloat().coerceAtLeast(1f)
+  val scale = minOf(size.width / srcW, size.height / srcH)
+  val dstW = (srcW * scale).toInt().coerceAtLeast(1)
+  val dstH = (srcH * scale).toInt().coerceAtLeast(1)
+  val ox = ((size.width - dstW) * 0.5f).toInt()
+  val oy = ((size.height - dstH) * 0.5f).toInt()
+  drawImage(
+    image = sprite,
+    dstOffset = IntOffset(ox, oy),
+    dstSize = IntSize(dstW, dstH),
+    filterQuality = FilterQuality.None,
+  )
 }
