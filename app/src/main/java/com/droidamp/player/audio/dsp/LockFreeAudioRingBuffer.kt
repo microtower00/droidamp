@@ -133,6 +133,60 @@ class LockFreeAudioRingBuffer(
     generation.set(g + 2L) // even = clear complete
   }
 
+  fun latestWritePosition(): Long = committedEnd.get()
+
+  /**
+   * Copies up to [dest.size] samples ending at [endSamplePos] (clamped to the currently retained
+   * window in the ring buffer) into the tail of [dest], zero-padding leading entries if fewer
+   * than [dest.size] samples are available.
+   */
+  fun readWindowEndingAt(
+    endSamplePos: Long,
+    dest: FloatArray,
+    maxRetries: Int = DEFAULT_MAX_RETRIES,
+  ): Int {
+    if (dest.isEmpty()) return 0
+
+    for (attempt in 0 until maxRetries) {
+      val genBefore = generation.get()
+      if ((genBefore and 1L) != 0L) continue
+
+      val latestEnd = committedEnd.get()
+      if (latestEnd <= 0L) {
+        readerFence.getAndIncrement()
+        if (generation.get() == genBefore && committedEnd.get() == 0L) {
+          dest.fill(0f)
+          return 0
+        }
+        continue
+      }
+
+      val oldestRetained = (latestEnd - capacity.toLong()).coerceAtLeast(0L)
+      val clampedEnd = endSamplePos.coerceIn(oldestRetained, latestEnd)
+      val available = minOf(dest.size.toLong(), clampedEnd - oldestRetained).toInt().coerceAtLeast(0)
+      if (available <= 0) {
+        return readLatest(dest, maxRetries = 1)
+      }
+      val readStart = clampedEnd - available
+      val leadingZeros = dest.size - available
+      if (leadingZeros > 0) {
+        dest.fill(0f, 0, leadingZeros)
+      }
+      for (i in 0 until available) {
+        dest[leadingZeros + i] = ring[(readStart + i).toInt() and mask]
+      }
+
+      readerFence.getAndIncrement()
+      val latestPending = pendingEnd.get()
+      val genAfter = generation.get()
+      if (genBefore == genAfter && (latestPending - readStart) <= capacity.toLong()) {
+        return available
+      }
+    }
+
+    return -1
+  }
+
   /**
    * Copies the latest up to [dest.size] samples into the tail of [dest] (zero-padding leading
    * entries when fewer than [dest.size] samples are available).
@@ -182,7 +236,7 @@ class LockFreeAudioRingBuffer(
   }
 
   companion object {
-    const val DEFAULT_CAPACITY = 8192
+    const val DEFAULT_CAPACITY = 32768
     const val DEFAULT_MAX_RETRIES = 16
   }
 }

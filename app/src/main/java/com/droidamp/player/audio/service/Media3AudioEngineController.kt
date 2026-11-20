@@ -1119,7 +1119,7 @@ class Media3AudioEngineController(
   }
 
   companion object {
-    const val VISUALIZER_POLL_INTERVAL_MS = 16L
+    const val VISUALIZER_POLL_INTERVAL_MS = 8L
     const val POSITION_POLL_INTERVAL_MS = 100L
     const val PREVIOUS_RESTART_THRESHOLD_MS = 3_000L
 

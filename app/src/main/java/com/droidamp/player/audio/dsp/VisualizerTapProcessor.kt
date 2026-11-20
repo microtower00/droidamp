@@ -16,6 +16,7 @@ import kotlin.math.pow
 class VisualizerTapProcessor(
   val ringBuffer: LockFreeAudioRingBuffer = LockFreeAudioRingBuffer(),
   val fft: Radix2Fft = Radix2Fft(),
+  private val nanoTimeProvider: () -> Long = System::nanoTime,
 ) : BaseAudioProcessor() {
   @Volatile
   private var activeSampleRateHz: Int = DEFAULT_SAMPLE_RATE_HZ
@@ -28,6 +29,8 @@ class VisualizerTapProcessor(
   private val magnitudes = FloatArray(fft.size / 2)
   private val smoothedBars = FloatArray(VisualizerFrame.SPECTRUM_BAR_COUNT)
   private val peakDots = FloatArray(VisualizerFrame.SPECTRUM_BAR_COUNT)
+  private var readCursorPos: Long = 0L
+  private var lastReadNanos: Long = 0L
 
   override fun onConfigure(
     inputAudioFormat: AudioProcessor.AudioFormat,
@@ -52,11 +55,19 @@ class VisualizerTapProcessor(
         DEFAULT_SAMPLE_RATE_HZ
       }
     ringBuffer.clear()
+    synchronized(readerLock) {
+      readCursorPos = 0L
+      lastReadNanos = 0L
+    }
   }
 
   override fun onReset() {
     ringBuffer.clear()
     activeSampleRateHz = DEFAULT_SAMPLE_RATE_HZ
+    synchronized(readerLock) {
+      readCursorPos = 0L
+      lastReadNanos = 0L
+    }
   }
 
   override fun queueInput(inputBuffer: ByteBuffer) {
@@ -110,10 +121,40 @@ class VisualizerTapProcessor(
   fun readVisualizerFrame(isPlaying: Boolean): VisualizerFrame =
     synchronized(readerLock) {
       if (!isPlaying) {
+        readCursorPos = 0L
+        lastReadNanos = 0L
         return decayToSilentLocked()
       }
 
-      val available = ringBuffer.readLatest(sampleWindow)
+      val latestWrite = ringBuffer.latestWritePosition()
+      if (latestWrite <= 0L) {
+        return decayToSilentLocked()
+      }
+
+      val sampleRate = activeSampleRateHz.coerceAtLeast(8000)
+      val nowNanos = nanoTimeProvider()
+      val maxLagSamples = (ringBuffer.capacity / 2).toLong()
+      val targetLagSamples =
+        minOf(
+          (sampleRate.toLong() * PLAYBACK_LAG_TARGET_MS) / 1000L,
+          (latestWrite - fft.size.toLong()).coerceAtLeast(0L),
+        )
+      val minCursor =
+        maxOf(
+          fft.size.toLong().coerceAtMost(latestWrite),
+          latestWrite - maxLagSamples,
+        )
+
+      if (readCursorPos <= 0L || readCursorPos > latestWrite || lastReadNanos == 0L) {
+        readCursorPos = (latestWrite - targetLagSamples).coerceIn(minCursor, latestWrite)
+      } else {
+        val dtNanos = (nowNanos - lastReadNanos).coerceIn(0L, MAX_FRAME_DT_NANOS)
+        val advanceSamples = (dtNanos * sampleRate.toLong()) / 1_000_000_000L
+        readCursorPos = (readCursorPos + advanceSamples).coerceIn(minCursor, latestWrite)
+      }
+      lastReadNanos = nowNanos
+
+      val available = ringBuffer.readWindowEndingAt(readCursorPos, sampleWindow)
       if (available == 0) {
         return decayToSilentLocked()
       }
@@ -132,7 +173,6 @@ class VisualizerTapProcessor(
 
       fft.computeSpectrumMagnitudes(sampleWindow, fftReal, fftImag, magnitudes)
 
-      val sampleRate = activeSampleRateHz.coerceAtLeast(8000)
       val maxFreq = minOf(MAX_VISUALIZER_FREQ_HZ, sampleRate * 0.48f)
       val minFreq = minOf(MIN_VISUALIZER_FREQ_HZ, maxFreq * 0.25f)
       val ratio = maxFreq / minFreq
@@ -183,6 +223,8 @@ class VisualizerTapProcessor(
     synchronized(readerLock) {
       smoothedBars.fill(0f)
       peakDots.fill(0f)
+      readCursorPos = 0L
+      lastReadNanos = 0L
     }
   }
 
@@ -227,5 +269,7 @@ class VisualizerTapProcessor(
     private const val PAUSED_BAR_DECAY = 0.08f
     private const val PAUSED_PEAK_DECAY = 0.03f
     private const val WAVEFORM_WINDOW_SAMPLES = 256
+    private const val PLAYBACK_LAG_TARGET_MS = 65L
+    private const val MAX_FRAME_DT_NANOS = 120_000_000L
   }
 }
