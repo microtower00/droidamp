@@ -188,3 +188,12 @@ This log records the key product, UX, and engineering decisions made during the 
 - **Decision**:
   - Users should be able to load real classic Winamp 2.x `.wsz` archives and reuse most of their visual components (sprites, `pledit.txt`, `viscolor.txt`, chassis/slider assets), accepting light mobile layout adaptation where needed.
 - **Rationale**: Logged early so all UX v2 changes keep `DroidAmpSkin` contracts and classic proportions `.wsz`-compatible without prematurely implementing Milestone 5.
+
+## ADR-023: Stereo-Tower Camera Pan, Locked Option B Layout & Zero-Shift Micro-Polish
+- **Date**: 2026-11-20
+- **Status**: Accepted *(User Testing #2 on Pixel 11 Pro)*
+- **Decision**:
+  - **Lock Option B** (Balanced Rack + Live 2-Tab Bottom Panel) and remove the temporary `UI:A/UI:B` prototype toggle.
+  - **Stereo-Tower Camera Pan**: Replace the overlay sheet with a single continuous vertical stereo rack where `Main Deck` + `EQ` + live `QUEUE / LIBRARY` browser translate upward together 1:1 (eliminating mid-drag unmounting bugs, making both Queue and Library 100% live & scrollable in resting state, and matching the physical sensation of panning from the top to the bottom of a hi-fi stereo).
+  - **Zero Layout Shift & Ergonomics**: Lock Library breadcrumb/LCD feedback row to fixed `32.dp` height, lock Queue track rows to fixed `38.dp` height, standardize inline `[▶]` and `[+]` buttons to identical `32×28dp` dimensions, and auto-focus + open the soft keyboard when activating `JUMP` filter.
+- **Rationale**: Directly resolves every visual jump, gesture interruption, and resting-state usability issue surfaced in User Testing #2.

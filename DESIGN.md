@@ -44,16 +44,17 @@ Every UI component renders through an abstract `DroidAmpSkin` interface (never h
      - `ON` and `AUTO` LED toggles + `PRESETS` button + live EQ response spline curve with transient VFD self-narration on drag or `AUTO` EQ toggle/match (e.g., `AUTO EQ: ROCK`, `3KHZ +4.5DB`).
      - `PREAMP` separated by a clear physical gap from the 10 frequency bands (**60Hz–16kHz**, -12dB to +12dB).
      - **Touch & Gesture Ergonomics**: Supports **EQ curve drawing** horizontally across the 10-band bank, wrapped in Android `systemGestureExclusion()` + horizontal bezel padding so edge drags never trigger Android Back.
-2. **Bottom Plane — 1:1 Finger-Tracking Drawer (`QUEUE` & `LIBRARY`)**:
-   - Separated from the EQ bottom by a dedicated **non-interactive bezel buffer**.
-   - **Collapsed (Peeking) State**: Non-scrollable glance surface that tracks the finger 1:1 vertically when dragged up (zero drag-vs-scroll conflict) and always reflects where the user left off (`QUEUE` vs. `LIBRARY`). *(A/B prototype supports Option A Slim Glance Lip and Option B 2-Tab Glance Peek.)*
-   - **Expanded (Full-Screen) State**: Covers Deck & EQ; dragging down from the header **or** pulling down at scroll-top collapses 1:1.
+2. **Bottom Plane — Unified Stereo-Tower Drawer (`QUEUE` & `LIBRARY`)**:
+   - Docked beneath the EQ with a dedicated **non-interactive bezel buffer** so upward drags never clip EQ sliders.
+   - **Stereo-Tower Camera Pan (1:1 Continuous Motion)**: Rather than an overlay covering the Deck, the entire stereo stack (`Main Deck` + `EQ` + live `QUEUE / LIBRARY` browser) pans upward together 1:1 as one physical unit—moving the viewport smoothly from the top of the stereo down to the full-screen browser.
+   - **Resting State (Balanced Rack + Live 2-Tab Browser)**: Shows `Main Deck` + `EQ` (open by default) above the **live, scrollable, interactive** `QUEUE / LIBRARY` panel (all queued tracks scrollable; Library fully browsable) with the bottom **`[QUEUE (N)] | [LIBRARY]`** tabs anchored above the gesture lip.
+   - **Expanded (Full-Screen) State**: `Main Deck` & `EQ` pan smoothly out of view; dragging down from the titlebar **or** pulling down at scroll-top pans the stereo tower back down 1:1.
    - **Navigation & Thumb-Zone Bottom Stack** (ordered top → bottom above `navigationBarsPadding()` + bottom lip):
-     1. **Context Actions**:
-        - **`QUEUE` mode (3 buttons)**: `[REM]` · `[MISC]` · `[LIST]` (strict Winamp menus, retro confirmation dialog on `CLEAR QUEUE`, and `SAVE AS PLAYLIST...` naming dialog for `.m3u8` / `.pls`).
-        - **`LIBRARY` mode**: Hidden when 0 items are selected; appears when 1+ items are selected (`[▶ PLAY (N)]` · `[+ QUEUE (N)]` · `[✕]`). Whole-folder play/queue lives on folder rows & the breadcrumb header.
+     1. **Context Actions** (shown when expanded):
+        - **`QUEUE` mode (3 buttons)**: `[REM]` · `[MISC]` · `[LIST]` (strict Winamp menus, retro confirmation dialog on `CLEAR QUEUE`, auto-focusing `JUMP` filter with keyboard, and `SAVE AS PLAYLIST...` naming dialog for `.m3u8` / `.pls`).
+        - **`LIBRARY` mode**: Hidden when 0 items are selected; appears when 1+ items are selected (`[▶ PLAY (N)]` · `[+ QUEUE (N)]` · `[✕]`). Whole-folder play/queue lives on folder rows & the fixed-height breadcrumb header.
      2. **Primary Tabs**: **`[QUEUE (N)]`** \| **`[LIBRARY]`** (also switchable via horizontal swipe between pages).
-     3. **Bottom transport micro-bar**: Compact carved-glyph `|< ▶ ❚❚ ■ >|` + `elapsed / total` time counter (no duplicate `⏏`).
+     3. **Bottom transport micro-bar** (shown when expanded): Compact carved-glyph `|< ▶ ❚❚ ■ >|` + `elapsed / total` time counter (no duplicate `⏏`).
 
 ### Library View (`LIBRARY`) — iPod-Style Hierarchy & Select-First Safety
 - **iPod-Style Root Menu**: Top-level choices **`> [DIR] FOLDERS`** and **`> [LST] PLAYLISTS`** with last-location memory. Android **Back** steps up one level (`DOORS` → `FOLDERS` → `LIBRARY` root), then collapses the drawer at root (or anywhere in `QUEUE`).
