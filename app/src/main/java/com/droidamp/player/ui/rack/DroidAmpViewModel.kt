@@ -46,7 +46,7 @@ data class RackUiState(
   val sheetMode: SheetMode = SheetMode.PLAYLIST,
   val libraryTab: LibraryTab = LibraryTab.FOLDERS,
   val libraryViewLevel: LibraryViewLevel = LibraryViewLevel.ROOT,
-  val restingLayoutVariant: RestingLayoutVariant = RestingLayoutVariant.OPTION_A_SLIM_LIP,
+  val restingLayoutVariant: RestingLayoutVariant = RestingLayoutVariant.OPTION_B_TAB_PEEK,
   val folderContents: FolderContents = FolderContents.EMPTY,
   val playlists: List<SavedPlaylistEntry> = emptyList(),
   val selectedPlaylistIndices: Set<Int> = emptySet(),

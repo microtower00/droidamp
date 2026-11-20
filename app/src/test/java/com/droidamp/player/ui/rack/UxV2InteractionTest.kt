@@ -113,10 +113,10 @@ class UxV2InteractionTest {
     val vm = DroidAmpViewModel(engine, repo)
     advanceUntilIdle()
 
-    // Option A <-> Option B toggle
-    assertEquals(RestingLayoutVariant.OPTION_A_SLIM_LIP, vm.uiState.value.restingLayoutVariant)
-    vm.toggleRestingLayoutVariant()
+    // Balanced <-> Full-Bleed toggle
     assertEquals(RestingLayoutVariant.OPTION_B_TAB_PEEK, vm.uiState.value.restingLayoutVariant)
+    vm.toggleRestingLayoutVariant()
+    assertEquals(RestingLayoutVariant.OPTION_A_SLIM_LIP, vm.uiState.value.restingLayoutVariant)
 
     // Seed queue with 1 track
     val firstFolder = vm.uiState.value.folderContents.folders.first()

@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -49,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.droidamp.player.domain.model.RestingLayoutVariant
 import com.droidamp.player.domain.model.StorageBackend
 import com.droidamp.player.skin.ClassicDroidAmpSkin
 import com.droidamp.player.skin.LocalDroidAmpSkin
@@ -191,6 +193,8 @@ fun DroidAmpRackScreen(
 
   val isDarkSystemTheme = isSystemInDarkTheme()
   val statusBarTopDp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+  val navBarBottomDp = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+  val isFullBleed = uiState.restingLayoutVariant == RestingLayoutVariant.OPTION_A_SLIM_LIP
 
   BoxWithConstraints(
     modifier =
@@ -200,8 +204,25 @@ fun DroidAmpRackScreen(
   ) {
     val fullHeightPx = constraints.maxHeight.toFloat().coerceAtLeast(1f)
     val statusBarTopPx = with(density) { statusBarTopDp.toPx() }
-    val minBrowserHeightPx = with(density) { 180.dp.toPx() }
+    val navBarBottomPx = with(density) { navBarBottomDp.toPx() }
+    val minBrowserHeightPx =
+      if (isFullBleed) {
+        with(density) { 82.dp.toPx() } + navBarBottomPx
+      } else {
+        with(density) { 180.dp.toPx() }
+      }
+    var deckHeightPx by remember { mutableFloatStateOf(with(density) { 270.dp.toPx() }) }
     var instrumentHeightPx by remember { mutableFloatStateOf((fullHeightPx - minBrowserHeightPx).coerceAtLeast(1f)) }
+
+    // In Full-Bleed mode (UI:FULL), dynamically stretch the EQ slider bank to fill 100% of
+    // remaining space above the docked drawer handle + bottom tabs (zero empty black void!).
+    val eqChromeAndBufferPx = with(density) { (22.dp + 28.dp + 30.dp + skin.metrics.sheetSwipeBufferHeight).toPx() }
+    val dynamicFullBleedEqDp =
+      with(density) {
+        (fullHeightPx - statusBarTopPx - deckHeightPx - eqChromeAndBufferPx - minBrowserHeightPx)
+          .toDp()
+          .coerceIn(156.dp, 300.dp)
+      }
 
     // Maximum vertical pan distance leaves the expanded browser titlebar cleanly below the status bar
     val maxPanPx =
@@ -286,7 +307,14 @@ fun DroidAmpRackScreen(
         onCycleRepeat = viewModel::cycleRepeatMode,
         onToggleEqVisible = viewModel::toggleEqVisible,
         onTogglePlaylistSheet = viewModel::onQueueButtonPressed,
-        spaciousMode = false,
+        spaciousMode = isFullBleed,
+        layoutVariantLabel = if (isFullBleed) "UI:FULL" else "UI:BAL",
+        onToggleLayoutVariant = viewModel::toggleRestingLayoutVariant,
+        modifier =
+          Modifier.onGloballyPositioned { coords ->
+            val h = coords.size.height.toFloat()
+            if (h > 0f) deckHeightPx = h
+          },
       )
 
       AnimatedVisibility(
@@ -303,7 +331,7 @@ fun DroidAmpRackScreen(
           onApplyPreset = viewModel::applyEqPreset,
           availablePresets = uiState.availableEqPresets,
           autoEqStatusReadout = uiState.autoEqFeedbackMessage,
-          sliderBankHeight = 132.dp,
+          sliderBankHeight = if (isFullBleed) dynamicFullBleedEqDp else 132.dp,
         )
       }
 

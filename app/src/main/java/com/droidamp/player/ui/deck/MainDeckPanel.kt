@@ -138,9 +138,9 @@ fun MainDeckPanel(
       (playbackState.positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
     }
 
-  val visualizerHeight = if (spaciousMode) 48.dp else 36.dp
-  val transportHeight = if (spaciousMode) 40.dp else 36.dp
-  val sliderHeight = if (spaciousMode) 26.dp else 24.dp
+  val visualizerHeight = if (spaciousMode) 64.dp else 36.dp
+  val transportHeight = if (spaciousMode) 44.dp else 36.dp
+  val sliderHeight = if (spaciousMode) 28.dp else 24.dp
 
   HardwarePanel(modifier = modifier.fillMaxWidth()) {
     Column(modifier = Modifier.fillMaxWidth()) {
