@@ -28,6 +28,7 @@ import com.droidamp.player.domain.model.VisualizerFrame
 import com.droidamp.player.domain.model.formatWinampDuration
 import com.droidamp.player.skin.LocalDroidAmpSkin
 import com.droidamp.player.ui.components.BeveledButton
+import com.droidamp.player.ui.components.BeveledIconButton
 import com.droidamp.player.ui.components.BeveledLedToggleButton
 import com.droidamp.player.ui.components.ChassisTitleBar
 import com.droidamp.player.ui.components.HardwarePanel
@@ -37,6 +38,8 @@ import com.droidamp.player.ui.components.RecessedWell
 import com.droidamp.player.ui.components.ScrollingMarqueeText
 import com.droidamp.player.ui.components.SevenSegmentClock
 import com.droidamp.player.ui.components.SliderTrackStyle
+import com.droidamp.player.ui.components.TransportIconType
+import com.droidamp.player.ui.components.VfdStatusGlyph
 import com.droidamp.player.ui.components.VfdVisualizerCanvas
 import kotlin.math.roundToInt
 
@@ -109,6 +112,9 @@ fun MainDeckPanel(
   onToggleEqVisible: () -> Unit,
   onTogglePlaylistSheet: () -> Unit,
   modifier: Modifier = Modifier,
+  spaciousMode: Boolean = false,
+  layoutVariantLabel: String? = null,
+  onToggleLayoutVariant: (() -> Unit)? = null,
 ) {
   val skin = LocalDroidAmpSkin.current
   var transientMarqueeOverride by remember { mutableStateOf<String?>(null) }
@@ -124,13 +130,6 @@ fun MainDeckPanel(
       "DROIDAMP v1.0  —  NO TRACK LOADED  ***  "
     }
 
-  val statusGlyph =
-    when (playbackState.status) {
-      PlaybackStatus.PLAYING -> "▶"
-      PlaybackStatus.PAUSED -> "II"
-      PlaybackStatus.STOPPED -> "■"
-    }
-
   val durationMs = playbackState.durationMs.coerceAtLeast(1L)
   val seekNorm =
     if (isDraggingSeek) {
@@ -139,13 +138,32 @@ fun MainDeckPanel(
       (playbackState.positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
     }
 
+  val visualizerHeight = if (spaciousMode) 48.dp else 36.dp
+  val transportHeight = if (spaciousMode) 40.dp else 36.dp
+  val sliderHeight = if (spaciousMode) 26.dp else 24.dp
+
   HardwarePanel(modifier = modifier.fillMaxWidth()) {
     Column(modifier = Modifier.fillMaxWidth()) {
-      ChassisTitleBar(title = "DROIDAMP")
+      ChassisTitleBar(
+        title = "DROIDAMP",
+        trailingContent =
+          if (layoutVariantLabel != null && onToggleLayoutVariant != null) {
+            {
+              BeveledButton(
+                label = layoutVariantLabel,
+                onClick = onToggleLayoutVariant,
+                modifier = Modifier.height(18.dp),
+                contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp),
+              )
+            }
+          } else {
+            null
+          },
+      )
 
       Column(
         modifier = Modifier.fillMaxWidth().padding(skin.metrics.panelPadding),
-        verticalArrangement = Arrangement.spacedBy(5.dp),
+        verticalArrangement = Arrangement.spacedBy(if (spaciousMode) 7.dp else 5.dp),
       ) {
         // Row 1: Recessed VFD Clock + Visualizer (left) & Marquee + Bitrate/kHz/Stereo (right)
         Row(
@@ -153,9 +171,9 @@ fun MainDeckPanel(
           horizontalArrangement = Arrangement.spacedBy(6.dp),
           verticalAlignment = Alignment.Top,
         ) {
-          // Left VFD Well: Status + 7-Segment Clock + 60fps Visualizer
+          // Left VFD Well: Carved Status Glyph + 7-Segment Clock + 60-120fps Visualizer
           RecessedWell(
-            modifier = Modifier.width(126.dp),
+            modifier = Modifier.width(128.dp),
             contentPadding = PaddingValues(4.dp),
           ) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -164,15 +182,9 @@ fun MainDeckPanel(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
               ) {
-                Text(
-                  text = statusGlyph,
-                  style = skin.typography.vfdInfo,
-                  color =
-                    if (playbackState.status == PlaybackStatus.PLAYING) {
-                      skin.vfd.phosphorPrimary
-                    } else {
-                      skin.vfd.phosphorDim
-                    },
+                VfdStatusGlyph(
+                  status = playbackState.status,
+                  glyphSize = 11.dp,
                 )
                 SevenSegmentClock(
                   positionMs = playbackState.positionMs,
@@ -185,7 +197,7 @@ fun MainDeckPanel(
                 modifier =
                   Modifier
                     .fillMaxWidth()
-                    .height(34.dp)
+                    .height(visualizerHeight)
                     .background(skin.visualizer.background),
               ) {
                 VfdVisualizerCanvas(
@@ -277,8 +289,8 @@ fun MainDeckPanel(
                   },
                   onDragFinished = { transientMarqueeOverride = null },
                   trackStyle = SliderTrackStyle.INTENSITY_RAMP,
-                  height = 20.dp,
-                  thumbWidth = 14.dp,
+                  height = sliderHeight,
+                  thumbWidth = 16.dp,
                 )
               }
 
@@ -311,8 +323,8 @@ fun MainDeckPanel(
                   },
                   onDragFinished = { transientMarqueeOverride = null },
                   trackStyle = SliderTrackStyle.CENTER_BALANCE,
-                  height = 20.dp,
-                  thumbWidth = 12.dp,
+                  height = sliderHeight,
+                  thumbWidth = 14.dp,
                 )
               }
             }
@@ -337,53 +349,59 @@ fun MainDeckPanel(
             transientMarqueeOverride = null
           },
           trackStyle = SliderTrackStyle.SEEKBAR,
-          height = 20.dp,
-          thumbWidth = 22.dp,
+          height = if (spaciousMode) 24.dp else 22.dp,
+          thumbWidth = 24.dp,
         )
 
-        // Row 3: Classic Transport Buttons (|< ▶ || ■ >| ⏏) + SHUFFLE / REPEAT / EQ / PL
+        // Row 3: Classic Carved-Glyph Transport Buttons (|< ▶ ❚❚ ■ >| ⏏)
         Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.spacedBy(3.dp),
           verticalAlignment = Alignment.CenterVertically,
         ) {
-          BeveledButton(
-            label = "|<",
+          BeveledIconButton(
+            icon = TransportIconType.PREV,
+            contentDescription = "Previous track",
             onClick = onPrev,
-            modifier = Modifier.weight(1f).height(34.dp),
-            contentPadding = PaddingValues(0.dp),
+            glyphSize = 15.dp,
+            modifier = Modifier.weight(1f).height(transportHeight),
           )
-          BeveledButton(
-            label = "▶",
+          BeveledIconButton(
+            icon = TransportIconType.PLAY,
+            contentDescription = "Play",
             onClick = onPlay,
             highlighted = playbackState.status == PlaybackStatus.PLAYING,
-            modifier = Modifier.weight(1f).height(34.dp),
-            contentPadding = PaddingValues(0.dp),
+            glyphSize = 15.dp,
+            modifier = Modifier.weight(1f).height(transportHeight),
           )
-          BeveledButton(
-            label = "||",
+          BeveledIconButton(
+            icon = TransportIconType.PAUSE,
+            contentDescription = "Pause",
             onClick = onPause,
             highlighted = playbackState.status == PlaybackStatus.PAUSED,
-            modifier = Modifier.weight(1f).height(34.dp),
-            contentPadding = PaddingValues(0.dp),
+            glyphSize = 15.dp,
+            modifier = Modifier.weight(1f).height(transportHeight),
           )
-          BeveledButton(
-            label = "■",
+          BeveledIconButton(
+            icon = TransportIconType.STOP,
+            contentDescription = "Stop",
             onClick = onStop,
-            modifier = Modifier.weight(1f).height(34.dp),
-            contentPadding = PaddingValues(0.dp),
+            glyphSize = 14.dp,
+            modifier = Modifier.weight(1f).height(transportHeight),
           )
-          BeveledButton(
-            label = ">|",
+          BeveledIconButton(
+            icon = TransportIconType.NEXT,
+            contentDescription = "Next track",
             onClick = onNext,
-            modifier = Modifier.weight(1f).height(34.dp),
-            contentPadding = PaddingValues(0.dp),
+            glyphSize = 15.dp,
+            modifier = Modifier.weight(1f).height(transportHeight),
           )
-          BeveledButton(
-            label = "⏏",
+          BeveledIconButton(
+            icon = TransportIconType.EJECT,
+            contentDescription = "Open Library",
             onClick = onEject,
-            modifier = Modifier.weight(1f).height(34.dp),
-            contentPadding = PaddingValues(0.dp),
+            glyphSize = 15.dp,
+            modifier = Modifier.weight(1f).height(transportHeight),
           )
         }
 
@@ -397,7 +415,7 @@ fun MainDeckPanel(
             checked = playbackState.shuffle,
             onClick = onToggleShuffle,
             compact = true,
-            modifier = Modifier.weight(1.25f).height(26.dp),
+            modifier = Modifier.weight(1.2f).height(28.dp),
           )
           val repeatLabel =
             when (playbackState.repeatMode) {
@@ -410,21 +428,21 @@ fun MainDeckPanel(
             checked = playbackState.repeatMode != RepeatMode.OFF,
             onClick = onCycleRepeat,
             compact = true,
-            modifier = Modifier.weight(1.25f).height(26.dp),
+            modifier = Modifier.weight(1.2f).height(28.dp),
           )
           BeveledLedToggleButton(
             label = "EQ",
             checked = isEqVisible,
             onClick = onToggleEqVisible,
             compact = true,
-            modifier = Modifier.weight(0.8f).height(26.dp),
+            modifier = Modifier.weight(0.75f).height(28.dp),
           )
           BeveledLedToggleButton(
-            label = "PL",
+            label = "QUEUE",
             checked = isSheetExpanded,
             onClick = onTogglePlaylistSheet,
             compact = true,
-            modifier = Modifier.weight(0.8f).height(26.dp),
+            modifier = Modifier.weight(1.0f).height(28.dp),
           )
         }
       }

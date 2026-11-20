@@ -32,6 +32,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -276,6 +279,53 @@ fun BeveledButton(
         },
       maxLines = 1,
       overflow = TextOverflow.Ellipsis,
+      modifier = Modifier.offset(x = shift, y = shift),
+    )
+  }
+}
+
+@Composable
+fun BeveledIconButton(
+  icon: TransportIconType,
+  contentDescription: String,
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier,
+  enabled: Boolean = true,
+  highlighted: Boolean = false,
+  glyphSize: Dp = 14.dp,
+  contentPadding: PaddingValues = PaddingValues(0.dp),
+) {
+  val skin = LocalDroidAmpSkin.current
+  val interactionSource = remember { MutableInteractionSource() }
+  val isPressed by interactionSource.collectIsPressedAsState()
+
+  Box(
+    modifier =
+      modifier
+        .background(if (isPressed) skin.bevel.buttonFacePressed else skin.bevel.buttonFace)
+        .raisedBevel(skin, pressed = isPressed)
+        .semantics { this.contentDescription = contentDescription }
+        .clickable(
+          enabled = enabled,
+          role = Role.Button,
+          interactionSource = interactionSource,
+          indication = null,
+          onClick = onClick,
+        )
+        .padding(contentPadding),
+    contentAlignment = Alignment.Center,
+  ) {
+    val shift = if (isPressed) 1.dp else 0.dp
+    val tint =
+      when {
+        !enabled -> skin.chassis.labelMuted
+        highlighted -> skin.bevel.buttonTextActive
+        else -> skin.bevel.buttonText
+      }
+    TransportHardwareGlyph(
+      type = icon,
+      tint = tint,
+      glyphSize = glyphSize,
       modifier = Modifier.offset(x = shift, y = shift),
     )
   }

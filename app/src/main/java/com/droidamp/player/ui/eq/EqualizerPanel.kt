@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -32,6 +33,8 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.droidamp.player.domain.model.ClassicWinampPresets
 import com.droidamp.player.domain.model.EqPreset
@@ -64,6 +67,8 @@ fun EqualizerPanel(
   onApplyPreset: (EqPreset) -> Unit,
   modifier: Modifier = Modifier,
   availablePresets: List<EqPreset> = ClassicWinampPresets.ALL,
+  autoEqStatusReadout: String? = null,
+  sliderBankHeight: Dp = 136.dp,
 ) {
   val skin = LocalDroidAmpSkin.current
   var activeDragReadout by remember { mutableStateOf<String?>(null) }
@@ -113,18 +118,25 @@ fun EqualizerPanel(
                 enabled = eqState.enabled,
                 modifier = Modifier.fillMaxSize(),
               )
-              if (activeDragReadout != null) {
+              val overlayReadout =
+                activeDragReadout
+                  ?: autoEqStatusReadout
+                  ?: eqState.activePresetName?.let { preset ->
+                    if (eqState.autoEnabled) "AUTO: ${preset.uppercase()}" else preset.uppercase()
+                  }
+              if (overlayReadout != null) {
                 Box(
                   modifier =
                     Modifier
-                      .background(skin.vfd.wellBackground.copy(alpha = 0.88f))
-                      .padding(horizontal = 6.dp, vertical = 1.dp),
+                      .background(skin.vfd.wellBackground.copy(alpha = if (activeDragReadout != null || autoEqStatusReadout != null) 0.90f else 0.62f))
+                      .padding(horizontal = 5.dp, vertical = 1.dp),
                 ) {
                   Text(
-                    text = activeDragReadout!!,
-                    style = skin.typography.vfdInfo,
-                    color = skin.vfd.phosphorBright,
+                    text = overlayReadout,
+                    style = if (activeDragReadout != null || autoEqStatusReadout != null) skin.typography.vfdInfo else skin.typography.microLabel,
+                    color = if (activeDragReadout != null || autoEqStatusReadout != null) skin.vfd.phosphorBright else skin.vfd.phosphorDim,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                   )
                 }
               }
@@ -152,9 +164,15 @@ fun EqualizerPanel(
           }
         }
 
-        // Slider Bank: Isolated PREAMP + etched physical gap + 10-band curve-drawable bank
+        // Slider Bank: Isolated PREAMP + etched physical gap + 10-band curve-drawable bank.
+        // Protected by systemGestureExclusion() + horizontal inset so edge drags never trigger Android Back (ADR-021).
         Row(
-          modifier = Modifier.fillMaxWidth().height(132.dp),
+          modifier =
+            Modifier
+              .fillMaxWidth()
+              .height(sliderBankHeight)
+              .systemGestureExclusion()
+              .padding(horizontal = 6.dp),
           verticalAlignment = Alignment.CenterVertically,
         ) {
           // Left: Isolated PREAMP column
