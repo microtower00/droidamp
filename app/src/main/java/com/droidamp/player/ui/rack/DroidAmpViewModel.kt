@@ -12,8 +12,10 @@ import com.droidamp.player.domain.model.EqPreset
 import com.droidamp.player.domain.model.FolderContents
 import com.droidamp.player.domain.model.FolderEntry
 import com.droidamp.player.domain.model.LibraryTab
+import com.droidamp.player.domain.model.LibraryViewLevel
 import com.droidamp.player.domain.model.PlaybackState
 import com.droidamp.player.domain.model.PlaylistSortOrder
+import com.droidamp.player.domain.model.RestingLayoutVariant
 import com.droidamp.player.domain.model.SavedPlaylistEntry
 import com.droidamp.player.domain.model.SheetMode
 import com.droidamp.player.domain.model.StorageBackend
@@ -24,6 +26,8 @@ import com.droidamp.player.interop.WinampPlaylistCodec
 import com.droidamp.player.interop.WinampPresetLibrary
 import com.droidamp.player.ui.sheet.PlaylistMicroMenu
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -40,6 +44,8 @@ data class RackUiState(
   val isSheetExpanded: Boolean = false,
   val sheetMode: SheetMode = SheetMode.PLAYLIST,
   val libraryTab: LibraryTab = LibraryTab.FOLDERS,
+  val libraryViewLevel: LibraryViewLevel = LibraryViewLevel.ROOT,
+  val restingLayoutVariant: RestingLayoutVariant = RestingLayoutVariant.OPTION_A_SLIM_LIP,
   val folderContents: FolderContents = FolderContents.EMPTY,
   val playlists: List<SavedPlaylistEntry> = emptyList(),
   val selectedPlaylistIndices: Set<Int> = emptySet(),
@@ -49,6 +55,10 @@ data class RackUiState(
   val jumpFilterQuery: String = "",
   val activeMicroMenu: PlaylistMicroMenu = PlaylistMicroMenu.NONE,
   val statusBanner: String? = null,
+  val libraryFeedbackBanner: String? = null,
+  val queueFeedbackPulseCount: Int = 0,
+  val autoEqFeedbackMessage: String? = null,
+  val showClearQueueConfirm: Boolean = false,
   val availableEqPresets: List<EqPreset> = ClassicWinampPresets.ALL,
 )
 
@@ -73,6 +83,9 @@ class DroidAmpViewModel(
 
   private val _uiState = MutableStateFlow(RackUiState())
   val uiState: StateFlow<RackUiState> = _uiState.asStateFlow()
+
+  private var libraryFeedbackJob: Job? = null
+  private var autoEqFeedbackJob: Job? = null
 
   init {
     // ADR-007: Apply cold-launch internal volume reset (~80% = 204) ONLY if playback is stopped.
@@ -144,6 +157,7 @@ class DroidAmpViewModel(
             currentEq.bandsDb == clampedBands
         if (!alreadyApplied) {
           audioEngine.applyEqPreset(matched)
+          showAutoEqFeedback("AUTO: ${matched.name.uppercase()}")
         }
       }
     }
@@ -188,6 +202,7 @@ class DroidAmpViewModel(
                 sheetMode = SheetMode.LIBRARY,
                 isSheetExpanded = true,
                 libraryTab = LibraryTab.FOLDERS,
+                libraryViewLevel = LibraryViewLevel.FOLDERS,
                 selectedLibraryTrackIds = emptySet(),
                 selectedLibraryPlaylistId = null,
                 statusBanner = "LINKED MUSIC FOLDER (SAF)",
@@ -244,6 +259,18 @@ class DroidAmpViewModel(
     _uiState.update { it.copy(isEqVisible = !it.isEqVisible) }
   }
 
+  fun toggleRestingLayoutVariant() {
+    _uiState.update {
+      val next =
+        if (it.restingLayoutVariant == RestingLayoutVariant.OPTION_A_SLIM_LIP) {
+          RestingLayoutVariant.OPTION_B_TAB_PEEK
+        } else {
+          RestingLayoutVariant.OPTION_A_SLIM_LIP
+        }
+      it.copy(restingLayoutVariant = next)
+    }
+  }
+
   fun expandSheetRememberedMode() {
     _uiState.update { it.copy(isSheetExpanded = true, activeMicroMenu = PlaylistMicroMenu.NONE) }
   }
@@ -258,7 +285,22 @@ class DroidAmpViewModel(
     }
   }
 
-  /** ADR-008: Eject (`⏏`) always jumps straight to LIBRARY in the full-screen sheet. */
+  /** ADR-019: Deck `QUEUE` toggle opens drawer directly to `QUEUE` (or collapses if already open on Queue). */
+  fun onQueueButtonPressed() {
+    _uiState.update {
+      if (it.isSheetExpanded && it.sheetMode == SheetMode.PLAYLIST) {
+        it.copy(isSheetExpanded = false, activeMicroMenu = PlaylistMicroMenu.NONE)
+      } else {
+        it.copy(
+          sheetMode = SheetMode.PLAYLIST,
+          isSheetExpanded = true,
+          activeMicroMenu = PlaylistMicroMenu.NONE,
+        )
+      }
+    }
+  }
+
+  /** ADR-008 / ADR-019: Eject (`⏏`) always opens drawer directly to `LIBRARY` (preserving drill-down location). */
   fun onEjectPressed() {
     _uiState.update {
       it.copy(
@@ -267,6 +309,116 @@ class DroidAmpViewModel(
         activeMicroMenu = PlaylistMicroMenu.NONE,
       )
     }
+  }
+
+  /**
+   * ADR-020: Android Back inside `LIBRARY` steps up one level (`DOORS` -> `FOLDERS` -> `ROOT`),
+   * then collapses the drawer once at `LIBRARY` root (or anywhere in `QUEUE`).
+   */
+  fun onBackPressedInExpandedSheet() {
+    val state = _uiState.value
+    if (!state.isSheetExpanded) return
+    if (state.sheetMode == SheetMode.LIBRARY) {
+      when (state.libraryViewLevel) {
+        LibraryViewLevel.FOLDERS -> {
+          if (state.folderContents.canNavigateUp) {
+            navigateFolderUp()
+          } else {
+            openLibraryRoot()
+          }
+        }
+        LibraryViewLevel.PLAYLISTS -> openLibraryRoot()
+        LibraryViewLevel.ROOT -> collapseSheet()
+      }
+    } else {
+      collapseSheet()
+    }
+  }
+
+  fun openLibraryRoot() {
+    _uiState.update {
+      it.copy(
+        libraryViewLevel = LibraryViewLevel.ROOT,
+        selectedLibraryTrackIds = emptySet(),
+        selectedLibraryPlaylistId = null,
+      )
+    }
+  }
+
+  fun openLibraryFolders() {
+    _uiState.update {
+      it.copy(
+        libraryTab = LibraryTab.FOLDERS,
+        libraryViewLevel = LibraryViewLevel.FOLDERS,
+        selectedLibraryTrackIds = emptySet(),
+        selectedLibraryPlaylistId = null,
+      )
+    }
+  }
+
+  fun openLibraryPlaylists() {
+    _uiState.update {
+      it.copy(
+        libraryTab = LibraryTab.PLAYLISTS,
+        libraryViewLevel = LibraryViewLevel.PLAYLISTS,
+        selectedLibraryTrackIds = emptySet(),
+        selectedLibraryPlaylistId = null,
+      )
+    }
+  }
+
+  fun clearLibrarySelection() {
+    _uiState.update {
+      it.copy(
+        selectedLibraryTrackIds = emptySet(),
+        selectedLibraryPlaylistId = null,
+      )
+    }
+  }
+
+  fun requestClearQueue() {
+    _uiState.update {
+      it.copy(
+        activeMicroMenu = PlaylistMicroMenu.NONE,
+        showClearQueueConfirm = true,
+      )
+    }
+  }
+
+  fun dismissClearQueueConfirm() {
+    _uiState.update { it.copy(showClearQueueConfirm = false) }
+  }
+
+  fun confirmClearQueue() {
+    clearPlaylist()
+    _uiState.update { it.copy(showClearQueueConfirm = false) }
+  }
+
+  private fun showAutoEqFeedback(message: String) {
+    autoEqFeedbackJob?.cancel()
+    _uiState.update { it.copy(autoEqFeedbackMessage = message) }
+    autoEqFeedbackJob =
+      viewModelScope.launch {
+        delay(2_600L)
+        _uiState.update { it.copy(autoEqFeedbackMessage = null) }
+      }
+  }
+
+  private fun emitEnqueueFeedback(addedCount: Int) {
+    if (addedCount <= 0) return
+    val total = playbackState.value.queue.size
+    libraryFeedbackJob?.cancel()
+    _uiState.update {
+      it.copy(
+        queueFeedbackPulseCount = it.queueFeedbackPulseCount + 1,
+        libraryFeedbackBanner = "+$addedCount ADDED TO QUEUE ($total TOTAL)",
+      )
+    }
+    libraryFeedbackJob =
+      viewModelScope.launch {
+        delay(2_200L)
+        _uiState.update { it.copy(libraryFeedbackBanner = null) }
+      }
   }
 
   fun switchSheetMode(mode: SheetMode) {
@@ -297,7 +449,18 @@ class DroidAmpViewModel(
   // --- Equalizer ---
 
   fun toggleEqEnabled() = audioEngine.setEqEnabled(!playbackState.value.equalizer.enabled)
-  fun toggleEqAuto() = audioEngine.setEqAutoEnabled(!playbackState.value.equalizer.autoEnabled)
+
+  fun toggleEqAuto() {
+    val nextEnabled = !playbackState.value.equalizer.autoEnabled
+    audioEngine.setEqAutoEnabled(nextEnabled)
+    showAutoEqFeedback(
+      if (nextEnabled) {
+        "AUTO EQ: ON (GENRE / .EQF)"
+      } else {
+        "AUTO EQ: OFF"
+      },
+    )
+  }
   fun setPreampDb(db: Float) = audioEngine.setPreampDb(db)
   fun setEqBandDb(bandIndex: Int, db: Float) = audioEngine.setEqBandDb(bandIndex, db)
   fun applyEqPreset(preset: EqPreset) = audioEngine.applyEqPreset(preset)
@@ -483,20 +646,52 @@ class DroidAmpViewModel(
       it.copy(
         sheetMode = SheetMode.LIBRARY,
         libraryTab = LibraryTab.PLAYLISTS,
+        libraryViewLevel = LibraryViewLevel.PLAYLISTS,
         activeMicroMenu = PlaylistMicroMenu.NONE,
       )
     }
   }
 
-  // --- Library Browser Actions (ADR-009 Select-First Track Safety) ---
+  // --- Library Browser Actions (ADR-009 / ADR-020 Select-First Track Safety) ---
 
   fun selectLibraryTab(tab: LibraryTab) {
     _uiState.update {
       it.copy(
         libraryTab = tab,
+        libraryViewLevel =
+          if (tab == LibraryTab.FOLDERS) LibraryViewLevel.FOLDERS else LibraryViewLevel.PLAYLISTS,
         selectedLibraryTrackIds = emptySet(),
         selectedLibraryPlaylistId = null,
       )
+    }
+  }
+
+  fun playCurrentFolder() {
+    val folderUri = _uiState.value.folderContents.currentFolderUri ?: return
+    viewModelScope.launch {
+      val tracks = musicRepository.resolveFolderTracks(folderUri, recursive = true)
+      if (tracks.isNotEmpty()) {
+        audioEngine.replaceQueue(tracks, startIndex = 0, autoPlay = true)
+        _uiState.update {
+          it.copy(
+            sheetMode = SheetMode.PLAYLIST,
+            selectedPlaylistIndices = emptySet(),
+            selectedLibraryTrackIds = emptySet(),
+            statusBanner = null,
+          )
+        }
+      }
+    }
+  }
+
+  fun enqueueCurrentFolder() {
+    val folderUri = _uiState.value.folderContents.currentFolderUri ?: return
+    viewModelScope.launch {
+      val tracks = musicRepository.resolveFolderTracks(folderUri, recursive = true)
+      if (tracks.isNotEmpty()) {
+        audioEngine.enqueueTracks(tracks)
+        emitEnqueueFeedback(tracks.size)
+      }
     }
   }
 
@@ -540,6 +735,7 @@ class DroidAmpViewModel(
       val tracks = musicRepository.resolveFolderTracks(folder.uriString, recursive = true)
       if (tracks.isNotEmpty()) {
         audioEngine.enqueueTracks(tracks)
+        emitEnqueueFeedback(tracks.size)
       }
     }
   }
@@ -571,6 +767,7 @@ class DroidAmpViewModel(
 
   fun enqueueSingleLibraryTrack(track: AudioTrack) {
     audioEngine.enqueueTracks(listOf(track))
+    emitEnqueueFeedback(1)
   }
 
   fun selectLibraryPlaylist(playlist: SavedPlaylistEntry) {
@@ -599,11 +796,12 @@ class DroidAmpViewModel(
       val tracks = musicRepository.resolvePlaylistTracks(playlist.id)
       if (tracks.isNotEmpty()) {
         audioEngine.enqueueTracks(tracks)
+        emitEnqueueFeedback(tracks.size)
       }
     }
   }
 
-  /** Bottom `[▶ PLAY]` button in LIBRARY acts on selected items or the current folder. */
+  /** Bottom contextual `[▶ PLAY]` button in LIBRARY acts on selected items or current folder. */
   fun playPrimaryLibrarySelection() {
     val state = _uiState.value
     when (state.libraryTab) {
@@ -612,17 +810,14 @@ class DroidAmpViewModel(
         if (selectedTracks.isNotEmpty()) {
           audioEngine.replaceQueue(selectedTracks, startIndex = 0, autoPlay = true)
           _uiState.update {
-            it.copy(selectedLibraryTrackIds = emptySet(), sheetMode = SheetMode.PLAYLIST)
+            it.copy(
+              selectedLibraryTrackIds = emptySet(),
+              selectedPlaylistIndices = emptySet(),
+              sheetMode = SheetMode.PLAYLIST,
+            )
           }
         } else {
-          val folderUri = state.folderContents.currentFolderUri ?: return
-          viewModelScope.launch {
-            val tracks = musicRepository.resolveFolderTracks(folderUri, recursive = true)
-            if (tracks.isNotEmpty()) {
-              audioEngine.replaceQueue(tracks, startIndex = 0, autoPlay = true)
-              _uiState.update { it.copy(sheetMode = SheetMode.PLAYLIST) }
-            }
-          }
+          playCurrentFolder()
         }
       }
       LibraryTab.PLAYLISTS -> {
@@ -635,7 +830,7 @@ class DroidAmpViewModel(
     }
   }
 
-  /** Bottom `[+ QUEUE]` button in LIBRARY enqueues selected items or the current folder. */
+  /** Bottom contextual `[+ QUEUE]` button in LIBRARY enqueues selected items or current folder. */
   fun enqueuePrimaryLibrarySelection() {
     val state = _uiState.value
     when (state.libraryTab) {
@@ -644,12 +839,9 @@ class DroidAmpViewModel(
         if (selectedTracks.isNotEmpty()) {
           audioEngine.enqueueTracks(selectedTracks)
           _uiState.update { it.copy(selectedLibraryTrackIds = emptySet()) }
+          emitEnqueueFeedback(selectedTracks.size)
         } else {
-          val folderUri = state.folderContents.currentFolderUri ?: return
-          viewModelScope.launch {
-            val tracks = musicRepository.resolveFolderTracks(folderUri, recursive = true)
-            if (tracks.isNotEmpty()) audioEngine.enqueueTracks(tracks)
-          }
+          enqueueCurrentFolder()
         }
       }
       LibraryTab.PLAYLISTS -> {

@@ -15,6 +15,17 @@ enum class LibraryTab {
   PLAYLISTS,
 }
 
+enum class LibraryViewLevel {
+  ROOT,
+  FOLDERS,
+  PLAYLISTS,
+}
+
+enum class RestingLayoutVariant {
+  OPTION_A_SLIM_LIP,
+  OPTION_B_TAB_PEEK,
+}
+
 enum class PlaylistSortOrder {
   TITLE,
   FILENAME,

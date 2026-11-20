@@ -34,12 +34,15 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.zIndex
 import com.droidamp.player.domain.model.AudioTrack
 import com.droidamp.player.domain.model.PlaylistSortOrder
 import com.droidamp.player.domain.model.formatWinampDuration
 import com.droidamp.player.skin.LocalDroidAmpSkin
 import com.droidamp.player.ui.components.BeveledButton
+import com.droidamp.player.ui.components.ChassisTitleBar
+import com.droidamp.player.ui.components.HardwarePanel
 import com.droidamp.player.ui.components.HardwareText
 import com.droidamp.player.ui.components.MicroMenuAction
 import com.droidamp.player.ui.components.RecessedWell
@@ -89,23 +92,24 @@ fun PlaylistEditorView(
   showJumpFilter: Boolean,
   jumpFilterQuery: String,
   activeMicroMenu: PlaylistMicroMenu,
-  statusBanner: String?,
+  showClearQueueConfirm: Boolean,
   onTrackClick: (Int) -> Unit,
   onTrackDoubleClick: (Int) -> Unit,
   onMoveTrackUp: (Int) -> Unit,
   onMoveTrackDown: (Int) -> Unit,
   onJumpFilterChange: (String) -> Unit,
   onToggleJumpFilter: () -> Unit,
-  onSwitchToLibrary: () -> Unit,
   onOpenMicroMenu: (PlaylistMicroMenu) -> Unit,
   onDismissMicroMenu: () -> Unit,
   onRemoveSelected: () -> Unit,
   onCropSelected: () -> Unit,
-  onClearQueue: () -> Unit,
+  onRequestClearQueue: () -> Unit,
+  onConfirmClearQueue: () -> Unit,
+  onDismissClearQueueConfirm: () -> Unit,
   onSortQueue: (PlaylistSortOrder) -> Unit,
   onReverseQueue: () -> Unit,
   onRandomizeQueue: () -> Unit,
-  onNewPlaylist: () -> Unit,
+  onNewQueue: () -> Unit,
   onSavePlaylist: () -> Unit,
   onLoadPlaylist: () -> Unit,
   modifier: Modifier = Modifier,
@@ -154,22 +158,7 @@ fun PlaylistEditorView(
       }
     }
 
-    if (statusBanner != null) {
-      RecessedWell(
-        modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-      ) {
-        Text(
-          text = statusBanner.uppercase(),
-          style = skin.typography.microLabel,
-          color = skin.vfd.ledAmber,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-        )
-      }
-    }
-
-    // Recessed pitch-black Winamp playlist well
+    // Recessed pitch-black Winamp queue well (no extra LCD banner per ADR-020)
     RecessedWell(
       modifier = Modifier.weight(1f).fillMaxWidth(),
       backgroundColor = skin.playlist.normalBackground,
@@ -178,7 +167,12 @@ fun PlaylistEditorView(
       if (filteredEntries.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
           Text(
-            text = if (queue.isEmpty()) "PLAYLIST EMPTY — TAP [LIB] TO ADD TRACKS" else "NO MATCHING TRACKS",
+            text =
+              if (queue.isEmpty()) {
+                "QUEUE EMPTY — SWIPE OR TAP [LIBRARY]"
+              } else {
+                "NO MATCHING TRACKS"
+              },
             style = skin.typography.vfdInfo,
             color = skin.vfd.phosphorDim,
           )
@@ -214,7 +208,6 @@ fun PlaylistEditorView(
                     val draggedItem = visibleItems.firstOrNull { it.key == currentEntry.rowKey }
                       ?: return@detectDragGesturesAfterLongPress
 
-                    // Wait for layout pass if state update has already moved the entry.
                     if (draggedItem.index != currentFilteredIdx) {
                       return@detectDragGesturesAfterLongPress
                     }
@@ -335,19 +328,11 @@ fun PlaylistEditorView(
       }
     }
 
-    // Mode-Specific 4-Button Bottom Bar (ADR-010: [LIB] [REM] [MISC] [LIST], zero dead buttons)
+    // Focused 3-Button Winamp Context Bar (ADR-019 / ADR-020: [REM] [MISC] [LIST])
     Row(
       modifier = Modifier.fillMaxWidth(),
       horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-      BeveledButton(
-        label = "LIB",
-        onClick = onSwitchToLibrary,
-        highlighted = true,
-        modifier = Modifier.weight(1f).height(32.dp),
-        contentPadding = PaddingValues(0.dp),
-      )
-
       Box(modifier = Modifier.weight(1f)) {
         BeveledButton(
           label = "REM",
@@ -362,7 +347,7 @@ fun PlaylistEditorView(
             listOf(
               MicroMenuAction("REM SELECTED", onRemoveSelected),
               MicroMenuAction("CROP SELECTED", onCropSelected),
-              MicroMenuAction("CLEAR LIST", onClearQueue),
+              MicroMenuAction("CLEAR QUEUE", onRequestClearQueue),
             ),
           onDismiss = onDismissMicroMenu,
         )
@@ -383,7 +368,7 @@ fun PlaylistEditorView(
               MicroMenuAction("JUMP / FILTER", onToggleJumpFilter),
               MicroMenuAction("SORT BY TITLE") { onSortQueue(PlaylistSortOrder.TITLE) },
               MicroMenuAction("SORT BY FILE") { onSortQueue(PlaylistSortOrder.FILENAME) },
-              MicroMenuAction("REVERSE LIST", onReverseQueue),
+              MicroMenuAction("REVERSE QUEUE", onReverseQueue),
               MicroMenuAction("RANDOMIZE", onRandomizeQueue),
             ),
           onDismiss = onDismissMicroMenu,
@@ -402,12 +387,53 @@ fun PlaylistEditorView(
           title = "LIST OPTS",
           actions =
             listOf(
-              MicroMenuAction("NEW LIST", onNewPlaylist),
+              MicroMenuAction("NEW QUEUE", onNewQueue),
               MicroMenuAction("LOAD PLAYLIST", onLoadPlaylist),
-              MicroMenuAction("SAVE .M3U8", onSavePlaylist),
+              MicroMenuAction("SAVE AS PLAYLIST...", onSavePlaylist),
             ),
           onDismiss = onDismissMicroMenu,
         )
+      }
+    }
+  }
+
+  if (showClearQueueConfirm) {
+    Dialog(onDismissRequest = onDismissClearQueueConfirm) {
+      HardwarePanel(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+          ChassisTitleBar(title = "CLEAR QUEUE")
+          Column(
+            modifier = Modifier.fillMaxWidth().padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+          ) {
+            RecessedWell(
+              modifier = Modifier.fillMaxWidth(),
+              contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+            ) {
+              Text(
+                text = "REMOVE ALL ${queue.size} TRACKS FROM CURRENT QUEUE?",
+                style = skin.typography.vfdInfo,
+                color = skin.vfd.phosphorPrimary,
+              )
+            }
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+              BeveledButton(
+                label = "CANCEL",
+                onClick = onDismissClearQueueConfirm,
+                modifier = Modifier.weight(1f).height(34.dp),
+              )
+              BeveledButton(
+                label = "CLEAR",
+                onClick = onConfirmClearQueue,
+                highlighted = true,
+                modifier = Modifier.weight(1f).height(34.dp),
+              )
+            }
+          }
+        }
       }
     }
   }

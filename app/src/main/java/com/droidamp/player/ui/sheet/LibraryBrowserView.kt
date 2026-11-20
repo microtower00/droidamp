@@ -21,130 +21,232 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.droidamp.player.domain.model.AudioTrack
 import com.droidamp.player.domain.model.FolderContents
 import com.droidamp.player.domain.model.FolderEntry
-import com.droidamp.player.domain.model.LibraryTab
+import com.droidamp.player.domain.model.LibraryViewLevel
 import com.droidamp.player.domain.model.SavedPlaylistEntry
 import com.droidamp.player.domain.model.formatWinampDuration
 import com.droidamp.player.skin.LocalDroidAmpSkin
 import com.droidamp.player.ui.components.BeveledButton
-import com.droidamp.player.ui.components.BeveledLedToggleButton
 import com.droidamp.player.ui.components.RecessedWell
 
 /**
- * Library browser (`[FOLDERS]` | `[PLAYLISTS]`) enforcing ADR-009 Select-First Track Safety:
- * - Folder row: single-tap explores; inline `[▶]` replace-plays; inline `[+]` enqueues.
- * - Track row: single-tap selects/toggles selection (never destructive); double-tap or `[▶]` replace-plays; `[+]` enqueues.
- * - Mode-specific 3-button bottom bar: `[PL]` · `[▶ PLAY]` · `[+ QUEUE]`.
+ * iPod-style Library browser (`ROOT` -> `FOLDERS` | `PLAYLISTS`) enforcing ADR-009 & ADR-020:
+ * - Top-level root presents `FOLDERS` and `PLAYLISTS` cleanly with zero double tab-bar clutter.
+ * - Folder row: single-tap explores; inline `[▶]` replace-plays & switches to QUEUE; `[+]` enqueues & stays.
+ * - Track row: single-tap selects (never destructive); double-tap or `[▶]` strict Winamp single-track replace-play;
+ *   `[+]` enqueues & stays in LIBRARY with haptic tick, `[Q×N]` row badge, and transient breadcrumb confirmation.
+ * - Bottom contextual action bar (`[▶ PLAY (N)]`, `[+ QUEUE (N)]`, `[✕]`) appears ONLY when 1+ items are selected.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LibraryBrowserView(
   hasLinkedRoots: Boolean,
-  libraryTab: LibraryTab,
+  libraryViewLevel: LibraryViewLevel,
   folderContents: FolderContents,
   playlists: List<SavedPlaylistEntry>,
   selectedTrackIds: Set<String>,
   selectedPlaylistId: String?,
+  queueCountByTrackId: Map<String, Int>,
+  libraryFeedbackBanner: String?,
   onSelectMusicFolder: () -> Unit,
-  onSelectTab: (LibraryTab) -> Unit,
+  onOpenLibraryRoot: () -> Unit,
+  onOpenLibraryFolders: () -> Unit,
+  onOpenLibraryPlaylists: () -> Unit,
   onNavigateUp: () -> Unit,
   onOpenFolder: (FolderEntry) -> Unit,
   onPlayFolder: (FolderEntry) -> Unit,
   onEnqueueFolder: (FolderEntry) -> Unit,
+  onPlayCurrentFolder: () -> Unit,
+  onEnqueueCurrentFolder: () -> Unit,
   onToggleTrackSelection: (AudioTrack) -> Unit,
   onPlayTrack: (AudioTrack) -> Unit,
   onEnqueueTrack: (AudioTrack) -> Unit,
   onSelectPlaylist: (SavedPlaylistEntry) -> Unit,
   onPlayPlaylist: (SavedPlaylistEntry) -> Unit,
   onEnqueuePlaylist: (SavedPlaylistEntry) -> Unit,
-  onSwitchToPlaylist: () -> Unit,
   onPlayPrimarySelection: () -> Unit,
   onEnqueuePrimarySelection: () -> Unit,
+  onClearSelection: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val skin = LocalDroidAmpSkin.current
+  val haptics = LocalHapticFeedback.current
+
+  val hasSelection =
+    when (libraryViewLevel) {
+      LibraryViewLevel.FOLDERS -> selectedTrackIds.isNotEmpty()
+      LibraryViewLevel.PLAYLISTS -> selectedPlaylistId != null
+      LibraryViewLevel.ROOT -> false
+    }
 
   Column(
     modifier = modifier.fillMaxSize(),
     verticalArrangement = Arrangement.spacedBy(5.dp),
   ) {
-    // Top-level Library Switcher: [FOLDERS] | [PLAYLISTS]
-    Row(
-      modifier = Modifier.fillMaxWidth(),
-      horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-      BeveledLedToggleButton(
-        label = "FOLDERS",
-        checked = libraryTab == LibraryTab.FOLDERS,
-        onClick = { onSelectTab(LibraryTab.FOLDERS) },
-        modifier = Modifier.weight(1f).height(28.dp),
-      )
-      BeveledLedToggleButton(
-        label = "PLAYLISTS",
-        checked = libraryTab == LibraryTab.PLAYLISTS,
-        onClick = { onSelectTab(LibraryTab.PLAYLISTS) },
-        modifier = Modifier.weight(1f).height(28.dp),
-      )
-    }
-
     if (!hasLinkedRoots) {
       EmptyFolderWell(
         onSelectMusicFolder = onSelectMusicFolder,
         modifier = Modifier.weight(1f).fillMaxWidth(),
       )
     } else {
-      // Distinct breadcrumb strip in FOLDERS mode for instant mode recognition (ADR-008)
-      if (libraryTab == LibraryTab.FOLDERS) {
-        val breadcrumb =
-          if (folderContents.currentPathSegments.isEmpty()) {
-            "SAF ROOTS"
-          } else {
-            folderContents.currentPathSegments.joinToString(" / ").uppercase()
+      // Breadcrumb bar (doubles as transient 2s enqueue confirmation well with zero layout jump)
+      val breadcrumbText =
+        libraryFeedbackBanner
+          ?: when (libraryViewLevel) {
+            LibraryViewLevel.ROOT -> "LIBRARY"
+            LibraryViewLevel.PLAYLISTS -> "LIBRARY / PLAYLISTS"
+            LibraryViewLevel.FOLDERS -> {
+              if (folderContents.currentPathSegments.isEmpty()) {
+                "LIBRARY / FOLDERS"
+              } else {
+                "LIBRARY / " + folderContents.currentPathSegments.joinToString(" / ").uppercase()
+              }
+            }
           }
-        RecessedWell(
+      val isFeedback = libraryFeedbackBanner != null
+
+      RecessedWell(
+        modifier = Modifier.fillMaxWidth(),
+        backgroundColor = if (isFeedback) skin.vfd.wellBackground else skin.playlist.breadcrumbBackground,
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+      ) {
+        Row(
           modifier = Modifier.fillMaxWidth(),
-          backgroundColor = skin.playlist.breadcrumbBackground,
-          contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
           Text(
-            text = breadcrumb,
+            text = breadcrumbText,
             style = skin.typography.microLabel,
-            color = skin.playlist.breadcrumbText,
+            color = if (isFeedback) skin.vfd.phosphorBright else skin.playlist.breadcrumbText,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
           )
+          // Inline whole-folder Play / Queue actions when inside a browsable folder
+          if (libraryViewLevel == LibraryViewLevel.FOLDERS &&
+            folderContents.currentFolderUri != null &&
+            !isFeedback
+          ) {
+            BeveledButton(
+              label = "▶ ALL",
+              onClick = onPlayCurrentFolder,
+              contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+            )
+            BeveledButton(
+              label = "+ ALL",
+              onClick = {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onEnqueueCurrentFolder()
+              },
+              contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+            )
+          }
         }
       }
 
-      // Main recessed file/playlist browser list
+      // Main recessed browser list
       RecessedWell(
         modifier = Modifier.weight(1f).fillMaxWidth(),
         backgroundColor = skin.playlist.normalBackground,
         contentPadding = PaddingValues(2.dp),
       ) {
-        when (libraryTab) {
-          LibraryTab.FOLDERS -> {
+        when (libraryViewLevel) {
+          LibraryViewLevel.ROOT -> {
             LazyColumn(modifier = Modifier.fillMaxSize()) {
-              if (folderContents.canNavigateUp) {
-                item(key = "nav-up") {
-                  Row(
-                    modifier =
-                      Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = onNavigateUp)
-                        .padding(horizontal = 8.dp, vertical = 9.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                  ) {
+              item(key = "root-folders") {
+                Row(
+                  modifier =
+                    Modifier
+                      .fillMaxWidth()
+                      .clickable(onClick = onOpenLibraryFolders)
+                      .padding(horizontal = 8.dp, vertical = 12.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                ) {
+                  Column(modifier = Modifier.weight(1f)) {
                     Text(
-                      text = "[..]  PARENT FOLDER",
+                      text = "> [DIR] FOLDERS",
                       style = skin.typography.trackRow,
-                      color = skin.playlist.breadcrumbText,
+                      color = skin.playlist.folderAccentText,
+                    )
+                    val sub =
+                      if (folderContents.currentPathSegments.isNotEmpty()) {
+                        "RESUME: ${folderContents.currentPathSegments.joinToString(" / ").uppercase()}"
+                      } else {
+                        "BROWSE LINKED MUSIC FOLDERS"
+                      }
+                    Text(
+                      text = sub,
+                      style = skin.typography.microLabel,
+                      color = skin.vfd.phosphorDim,
+                      maxLines = 1,
+                      overflow = TextOverflow.Ellipsis,
                     )
                   }
+                }
+              }
+
+              item(key = "root-playlists") {
+                Row(
+                  modifier =
+                    Modifier
+                      .fillMaxWidth()
+                      .clickable(onClick = onOpenLibraryPlaylists)
+                      .padding(horizontal = 8.dp, vertical = 12.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                ) {
+                  Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                      text = "> [LST] PLAYLISTS",
+                      style = skin.typography.trackRow,
+                      color = skin.playlist.normalText,
+                    )
+                    Text(
+                      text = "${playlists.size} SAVED .M3U / .M3U8 / .PLS",
+                      style = skin.typography.microLabel,
+                      color = skin.vfd.phosphorDim,
+                    )
+                  }
+                }
+              }
+            }
+          }
+
+          LibraryViewLevel.FOLDERS -> {
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+              item(key = "nav-up") {
+                Row(
+                  modifier =
+                    Modifier
+                      .fillMaxWidth()
+                      .clickable(
+                        onClick = {
+                          if (folderContents.canNavigateUp) {
+                            onNavigateUp()
+                          } else {
+                            onOpenLibraryRoot()
+                          }
+                        },
+                      )
+                      .padding(horizontal = 8.dp, vertical = 9.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                ) {
+                  Text(
+                    text =
+                      if (folderContents.canNavigateUp) {
+                        "[..]  PARENT FOLDER"
+                      } else {
+                        "[..]  BACK TO LIBRARY"
+                      },
+                    style = skin.typography.trackRow,
+                    color = skin.playlist.breadcrumbText,
+                  )
                 }
               }
 
@@ -175,15 +277,19 @@ fun LibraryBrowserView(
                   Spacer(Modifier.width(4.dp))
                   BeveledButton(
                     label = "+",
-                    onClick = { onEnqueueFolder(folder) },
+                    onClick = {
+                      haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                      onEnqueueFolder(folder)
+                    },
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                   )
                 }
               }
 
-              // Track rows: single-tap = SELECT (safe); double-tap / [▶] = replace-play; [+] = enqueue
+              // Track rows: single-tap = SELECT (safe); double-tap / [▶] = strict Winamp single-track play; [+] = enqueue
               items(items = folderContents.tracks, key = { "trk-${it.id}" }) { track ->
                 val isSelected = track.id in selectedTrackIds
+                val inQueueCount = queueCountByTrackId[track.id] ?: 0
                 val rowBg =
                   if (isSelected) skin.playlist.selectedBackground else skin.playlist.normalBackground
                 val rowFg =
@@ -209,7 +315,15 @@ fun LibraryBrowserView(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                   )
-                  Spacer(Modifier.width(6.dp))
+                  if (inQueueCount > 0) {
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                      text = if (inQueueCount == 1) "[Q]" else "[Q×$inQueueCount]",
+                      style = skin.typography.microLabel,
+                      color = if (isSelected) rowFg else skin.vfd.phosphorPrimary,
+                    )
+                  }
+                  Spacer(Modifier.width(5.dp))
                   Text(
                     text = formatWinampDuration(track.durationMs),
                     style = skin.typography.microLabel,
@@ -224,19 +338,19 @@ fun LibraryBrowserView(
                   Spacer(Modifier.width(4.dp))
                   BeveledButton(
                     label = "+",
-                    onClick = { onEnqueueTrack(track) },
+                    onClick = {
+                      haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                      onEnqueueTrack(track)
+                    },
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                   )
                 }
               }
 
-              if (!folderContents.canNavigateUp &&
-                folderContents.folders.isEmpty() &&
-                folderContents.tracks.isEmpty()
-              ) {
+              if (folderContents.folders.isEmpty() && folderContents.tracks.isEmpty()) {
                 item(key = "empty-dir") {
                   Box(
-                    modifier = Modifier.fillParentMaxSize(),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
                     contentAlignment = Alignment.Center,
                   ) {
                     Text(
@@ -250,17 +364,39 @@ fun LibraryBrowserView(
             }
           }
 
-          LibraryTab.PLAYLISTS -> {
-            if (playlists.isEmpty()) {
-              Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                  text = "NO .M3U / .PLS PLAYLISTS FOUND",
-                  style = skin.typography.vfdInfo,
-                  color = skin.vfd.phosphorDim,
-                )
+          LibraryViewLevel.PLAYLISTS -> {
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+              item(key = "pl-back") {
+                Row(
+                  modifier =
+                    Modifier
+                      .fillMaxWidth()
+                      .clickable(onClick = onOpenLibraryRoot)
+                      .padding(horizontal = 8.dp, vertical = 9.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                ) {
+                  Text(
+                    text = "[..]  BACK TO LIBRARY",
+                    style = skin.typography.trackRow,
+                    color = skin.playlist.breadcrumbText,
+                  )
+                }
               }
-            } else {
-              LazyColumn(modifier = Modifier.fillMaxSize()) {
+
+              if (playlists.isEmpty()) {
+                item(key = "empty-playlists") {
+                  Box(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                    contentAlignment = Alignment.Center,
+                  ) {
+                    Text(
+                      text = "NO .M3U / .PLS PLAYLISTS FOUND",
+                      style = skin.typography.vfdInfo,
+                      color = skin.vfd.phosphorDim,
+                    )
+                  }
+                }
+              } else {
                 items(items = playlists, key = { it.id }) { pl ->
                   val isSelected = pl.id == selectedPlaylistId
                   val rowBg =
@@ -302,7 +438,10 @@ fun LibraryBrowserView(
                     Spacer(Modifier.width(4.dp))
                     BeveledButton(
                       label = "+",
-                      onClick = { onEnqueuePlaylist(pl) },
+                      onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onEnqueuePlaylist(pl)
+                      },
                       contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                     )
                   }
@@ -312,40 +451,43 @@ fun LibraryBrowserView(
           }
         }
       }
-    }
 
-    // Mode-Specific 3-Button Bottom Bar (ADR-010: [PL] [▶ PLAY] [+ QUEUE])
-    Row(
-      modifier = Modifier.fillMaxWidth(),
-      horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-      BeveledButton(
-        label = "PL",
-        onClick = onSwitchToPlaylist,
-        highlighted = true,
-        modifier = Modifier.weight(0.9f).height(32.dp),
-        contentPadding = PaddingValues(0.dp),
-      )
-      val playLabel =
-        if (selectedTrackIds.isNotEmpty() && libraryTab == LibraryTab.FOLDERS) {
-          "▶ PLAY (${selectedTrackIds.size})"
-        } else {
-          "▶ PLAY"
+      // Contextual Selection Bar: ONLY visible when 1+ items are selected (ADR-020)
+      if (hasSelection) {
+        val countSuffix =
+          if (libraryViewLevel == LibraryViewLevel.FOLDERS && selectedTrackIds.isNotEmpty()) {
+            " (${selectedTrackIds.size})"
+          } else {
+            ""
+          }
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+          BeveledButton(
+            label = "▶ PLAY$countSuffix",
+            onClick = onPlayPrimarySelection,
+            highlighted = true,
+            modifier = Modifier.weight(1.2f).height(32.dp),
+            contentPadding = PaddingValues(0.dp),
+          )
+          BeveledButton(
+            label = "+ QUEUE$countSuffix",
+            onClick = {
+              haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+              onEnqueuePrimarySelection()
+            },
+            modifier = Modifier.weight(1.2f).height(32.dp),
+            contentPadding = PaddingValues(0.dp),
+          )
+          BeveledButton(
+            label = "✕",
+            onClick = onClearSelection,
+            modifier = Modifier.width(38.dp).height(32.dp),
+            contentPadding = PaddingValues(0.dp),
+          )
         }
-      BeveledButton(
-        label = playLabel,
-        onClick = onPlayPrimarySelection,
-        enabled = hasLinkedRoots,
-        modifier = Modifier.weight(1.1f).height(32.dp),
-        contentPadding = PaddingValues(0.dp),
-      )
-      BeveledButton(
-        label = "+ QUEUE",
-        onClick = onEnqueuePrimarySelection,
-        enabled = hasLinkedRoots,
-        modifier = Modifier.weight(1.1f).height(32.dp),
-        contentPadding = PaddingValues(0.dp),
-      )
+      }
     }
   }
 }

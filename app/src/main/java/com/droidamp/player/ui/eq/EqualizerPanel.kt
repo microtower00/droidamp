@@ -121,7 +121,7 @@ fun EqualizerPanel(
               val overlayReadout =
                 activeDragReadout
                   ?: autoEqStatusReadout
-                  ?: eqState.activePresetName?.let { preset ->
+                  ?: eqState.activePresetName.takeIf { it.isNotBlank() }?.let { preset ->
                     if (eqState.autoEnabled) "AUTO: ${preset.uppercase()}" else preset.uppercase()
                   }
               if (overlayReadout != null) {
