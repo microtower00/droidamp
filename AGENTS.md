@@ -22,6 +22,9 @@ Read [DESIGN.md](DESIGN.md) and [DECISIONS.md](DECISIONS.md) before making archi
 8. **Dependencies & Open-Source Licensing**:
    - Never add third-party libraries beyond the already-specified AndroidX/Media3/DocumentFile/DataStore stack without asking the user for explicit permission first.
    - Open-source code may only be copied or reused if permitted by its license; record source and license attribution so proper credits can be given (DroidAmp is a non-monetized project).
+9. **Branching, CI & Release Hygiene**:
+   - Never commit new feature/fix work directly to `master`. Always work on a `feat/<slug>`, `fix/<slug>`, or `chore/<slug>` branch, and merge into `master` only after `./gradlew testDebugUnitTest assembleDebug` passes.
+   - Cut releases from the dedicated `release` branch: merge `master` → `release`, bump version in `app/build.gradle.kts` (`ADR-025`), **capture fresh screenshots and update `README.md` whenever UI screens changed**, tag `v<MAJOR>.<MINOR>.<PATCH>[-alpha.N|-beta.N|-rc.N]`, and push so GitHub Actions (`.github/workflows/release.yml`) publishes the Release automatically.
 
 ## Project Identity & Commands
 

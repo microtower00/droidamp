@@ -15,6 +15,10 @@ This playbook documents how to build **DroidAmp** efficiently across sessions us
    - Run `/compact` after completing and committing each milestone.
    - Run `/learn` whenever you correct a convention so it persists across sessions.
    - Add specialized reference specs (e.g., exact `.eqf` / `winamp.q1` / `.wsz` byte layouts) as on-demand project skills under `.agents/skills/<skill-name>/SKILL.md` so they only load when relevant.
+3. **Branching, CI & Release Flow (ADR-026)**:
+   - **Feature branches (`feat/*`, `fix/*`, `chore/*`)**: All implementation happens off `master`.
+   - **Integration (`master`)**: Merge feature branches into `master` only when `./gradlew testDebugUnitTest assembleDebug` passes (enforced automatically by `.github/workflows/ci.yml` + offline-permission manifest audit).
+   - **Release (`release`)**: Merge `master` → `release`, bump `appVersion*` & `appVersionCode` in `app/build.gradle.kts`, capture updated screenshots locally via emulator/device and refresh `README.md` **if UI screens changed**, create annotated tag `vX.Y.Z[-alpha.N]`, and push — `.github/workflows/release.yml` automatically builds, audits, and publishes the GitHub Release + APK.
 
 ---
 

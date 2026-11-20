@@ -219,3 +219,12 @@ This log records the key product, UX, and engineering decisions made during the 
   - Publish tagged alpha/beta/stable APKs via GitHub Releases (`--prerelease` for `alpha`/`beta`/`rc`), named `droidamp-v<versionName>-debug.apk` (for alpha test builds) or `droidamp-v<versionName>.apk` (for signed stable releases).
   - Lock the **Balanced Stereo-Tower Rack** as the sole resting layout (scrapping the Full-Bleed Option A prototype after User Test #4).
 - **Rationale**: Gives testers and contributors clear, predictable upgrade paths and traceable GitHub Release artifacts from the first alpha onward.
+
+## ADR-026: Hybrid Branching, GitHub Actions CI/Release & Local Screenshot Refresh
+- **Date**: 2026-11-20
+- **Status**: Accepted
+- **Decision**:
+  - Keep `master` as the primary integration branch (do not rename) and maintain a dedicated `release` branch alongside short-lived `feat/<name>`, `fix/<name>`, and `chore/<name>` branches.
+  - Merge feature branches into `master` only when tests pass; enforce unit tests, APK build, and zero-forbidden-permissions audit automatically via `.github/workflows/ci.yml`.
+  - Cut releases on `release`: merge `master` → `release`, bump version in `app/build.gradle.kts`, update `README.md` screenshots locally via AGY whenever UI screens changed, tag `vX.Y.Z[-alpha.N]`, and push — `.github/workflows/release.yml` builds, audits, and publishes the GitHub Release + APK automatically.
+- **Rationale**: Gives clean mechanical CI/CD guardrails in GitHub Actions without paying the slow/flaky cost of KVM-less Android emulators in CI, while letting AGY handle fast local visual screenshot refreshes and feature-branch hygiene.
