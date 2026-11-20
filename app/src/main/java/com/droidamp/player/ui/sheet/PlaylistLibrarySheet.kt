@@ -144,18 +144,18 @@ fun PeekingPlaylistSheet(
             }
           }
         }
-
-        // Non-interactive bottom lip + Android gesture bar clearance
-        Box(
-          modifier =
-            Modifier
-              .fillMaxWidth()
-              .background(skin.chassis.bottomLip)
-              .navigationBarsPadding()
-              .height(skin.metrics.chassisBottomLipHeight),
-        )
       }
     }
+
+    // Non-interactive bottom lip + Android gesture bar clearance (outside clickable HardwarePanel)
+    Box(
+      modifier =
+        Modifier
+          .fillMaxWidth()
+          .background(skin.chassis.bottomLip)
+          .navigationBarsPadding()
+          .height(skin.metrics.chassisBottomLipHeight),
+    )
   }
 }
 
@@ -217,6 +217,7 @@ fun ExpandedPlaylistLibrarySheet(
   onStop: () -> Unit,
   onNext: () -> Unit,
   modifier: Modifier = Modifier,
+  onMoveTrack: (fromIndex: Int, toIndex: Int) -> Unit = { _, _ -> },
 ) {
   val skin = LocalDroidAmpSkin.current
   var dragAccumulator by remember { mutableFloatStateOf(0f) }
@@ -286,6 +287,7 @@ fun ExpandedPlaylistLibrarySheet(
                   onNewPlaylist = onNewPlaylist,
                   onSavePlaylist = onSavePlaylist,
                   onLoadPlaylist = onLoadPlaylist,
+                  onMoveTrack = onMoveTrack,
                 )
               }
             }

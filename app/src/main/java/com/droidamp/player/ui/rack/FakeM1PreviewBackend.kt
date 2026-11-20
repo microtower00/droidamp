@@ -17,7 +17,9 @@ import com.droidamp.player.domain.model.TimeDisplayMode
 import com.droidamp.player.domain.model.VisualizerFrame
 import com.droidamp.player.domain.model.VisualizerMode
 import com.droidamp.player.domain.model.WinampEqSpec
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,6 +39,7 @@ import kotlin.math.sin
 class FakeAudioEngineController(
   private val scope: CoroutineScope,
   private val enableSimulationTicker: Boolean = true,
+  private val tickerDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : AudioEngineController {
 
   private val _playbackState = MutableStateFlow(PlaybackState())
@@ -45,34 +48,54 @@ class FakeAudioEngineController(
   private val _visualizerFrame = MutableStateFlow(VisualizerFrame.SILENT)
   override val visualizerFrame: StateFlow<VisualizerFrame> = _visualizerFrame.asStateFlow()
 
+  private val stateLock = Any()
   private var tickerJob: Job? = null
   private val peakCaps = FloatArray(VisualizerFrame.SPECTRUM_BAR_COUNT)
   private var phase = 0f
 
   private fun startTickerIfNeeded() {
-    if (!enableSimulationTicker || tickerJob?.isActive == true) return
-    tickerJob =
-      scope.launch {
-        var tickMs = 0L
-        while (isActive) {
-          delay(33L) // ~30-60fps smooth VFD preview
-          val state = _playbackState.value
-          if (state.status != PlaybackStatus.PLAYING) {
-            decayVisualizer()
-            continue
-          }
-
-          tickMs += 33L
-          if (tickMs >= 250L) {
-            advanceClock(tickMs)
-            tickMs = 0L
-          }
-          emitAnimatedVisualizerFrame(state)
-        }
+    synchronized(stateLock) {
+      if (!enableSimulationTicker || tickerJob?.isActive == true) return
+      val initialState = _playbackState.value
+      if (initialState.status == PlaybackStatus.PLAYING) {
+        emitAnimatedVisualizerFrameLocked(initialState)
       }
+      tickerJob =
+        scope.launch(tickerDispatcher) {
+          var tickMs = 0L
+          while (isActive) {
+            delay(33L) // ~30-60fps smooth VFD preview
+            val shouldStopTicker =
+              synchronized(stateLock) {
+                val state = _playbackState.value
+                if (state.status != PlaybackStatus.PLAYING) {
+                  decayVisualizerLocked()
+                  if (_visualizerFrame.value == VisualizerFrame.SILENT) {
+                    tickerJob = null
+                    true
+                  } else {
+                    false
+                  }
+                } else {
+                  tickMs += 33L
+                  if (tickMs >= 250L) {
+                    advanceClockLocked(tickMs)
+                    tickMs = 0L
+                  }
+                  val currentState = _playbackState.value
+                  if (currentState.status == PlaybackStatus.PLAYING) {
+                    emitAnimatedVisualizerFrameLocked(currentState)
+                  }
+                  false
+                }
+              }
+            if (shouldStopTicker) break
+          }
+        }
+    }
   }
 
-  private fun advanceClock(deltaMs: Long) {
+  private fun advanceClockLocked(deltaMs: Long) {
     val state = _playbackState.value
     val track = state.currentTrack ?: return
     val nextPos = state.positionMs + deltaMs
@@ -93,7 +116,7 @@ class FakeAudioEngineController(
     }
   }
 
-  private fun emitAnimatedVisualizerFrame(state: PlaybackState) {
+  private fun emitAnimatedVisualizerFrameLocked(state: PlaybackState) {
     phase += 0.24f
     val gainScale = (state.volume / 255f).coerceIn(0.15f, 1f)
     val bars = FloatArray(VisualizerFrame.SPECTRUM_BAR_COUNT)
@@ -127,7 +150,7 @@ class FakeAudioEngineController(
     _visualizerFrame.value = VisualizerFrame(bars, peaks, waveform)
   }
 
-  private fun decayVisualizer() {
+  private fun decayVisualizerLocked() {
     val current = _visualizerFrame.value
     var anyActive = false
     val bars = FloatArray(current.spectrumBars.size)
@@ -144,181 +167,218 @@ class FakeAudioEngineController(
   }
 
   override fun play() {
-    _playbackState.update { state ->
-      if (state.queue.isEmpty()) return@update state
-      val targetIndex = if (state.currentIndex in state.queue.indices) state.currentIndex else 0
-      state.copy(status = PlaybackStatus.PLAYING, currentIndex = targetIndex)
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        if (state.queue.isEmpty()) return@update state
+        val targetIndex = if (state.currentIndex in state.queue.indices) state.currentIndex else 0
+        state.copy(status = PlaybackStatus.PLAYING, currentIndex = targetIndex)
+      }
+      startTickerIfNeeded()
     }
-    startTickerIfNeeded()
   }
 
   override fun pause() {
-    _playbackState.update { state ->
-      if (state.status == PlaybackStatus.PLAYING) state.copy(status = PlaybackStatus.PAUSED) else state
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        if (state.status == PlaybackStatus.PLAYING) state.copy(status = PlaybackStatus.PAUSED) else state
+      }
     }
   }
 
   override fun stop() {
-    _playbackState.update { it.copy(status = PlaybackStatus.STOPPED, positionMs = 0L) }
-    peakCaps.fill(0f)
-    _visualizerFrame.value = VisualizerFrame.SILENT
+    synchronized(stateLock) {
+      _playbackState.update { it.copy(status = PlaybackStatus.STOPPED, positionMs = 0L) }
+      peakCaps.fill(0f)
+      _visualizerFrame.value = VisualizerFrame.SILENT
+    }
   }
 
   override fun next() {
-    _playbackState.update { state ->
-      if (state.queue.isEmpty()) return@update state
-      val nextIdx =
-        if (state.shuffle && state.queue.size > 1) {
-          val candidates = state.queue.indices.filter { it != state.currentIndex }
-          candidates.random()
-        } else {
-          (state.currentIndex + 1) % state.queue.size
-        }
-      state.copy(currentIndex = nextIdx, positionMs = 0L)
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        if (state.queue.isEmpty()) return@update state
+        val nextIdx =
+          if (state.shuffle && state.queue.size > 1) {
+            val candidates = state.queue.indices.filter { it != state.currentIndex }
+            candidates.random()
+          } else {
+            (state.currentIndex + 1) % state.queue.size
+          }
+        state.copy(currentIndex = nextIdx, positionMs = 0L)
+      }
     }
   }
 
   override fun previous() {
-    _playbackState.update { state ->
-      if (state.queue.isEmpty()) return@update state
-      if (state.positionMs > 3_000L) {
-        return@update state.copy(positionMs = 0L)
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        if (state.queue.isEmpty()) return@update state
+        if (state.positionMs > 3_000L) {
+          return@update state.copy(positionMs = 0L)
+        }
+        val prevIdx =
+          if (state.currentIndex <= 0) state.queue.lastIndex else state.currentIndex - 1
+        state.copy(currentIndex = prevIdx, positionMs = 0L)
       }
-      val prevIdx =
-        if (state.currentIndex <= 0) state.queue.lastIndex else state.currentIndex - 1
-      state.copy(currentIndex = prevIdx, positionMs = 0L)
     }
   }
 
   override fun seekTo(positionMs: Long) {
-    _playbackState.update { state ->
-      val maxMs = state.durationMs.coerceAtLeast(0L)
-      state.copy(positionMs = positionMs.coerceIn(0L, maxMs))
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        if (state.queue.isEmpty()) return@update state
+        val maxMs = state.durationMs.coerceAtLeast(0L)
+        state.copy(positionMs = positionMs.coerceIn(0L, maxMs))
+      }
     }
   }
 
   override fun playTrackAt(index: Int) {
-    _playbackState.update { state ->
-      if (index !in state.queue.indices) return@update state
-      state.copy(currentIndex = index, positionMs = 0L, status = PlaybackStatus.PLAYING)
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        if (index !in state.queue.indices) return@update state
+        state.copy(currentIndex = index, positionMs = 0L, status = PlaybackStatus.PLAYING)
+      }
+      startTickerIfNeeded()
     }
-    startTickerIfNeeded()
   }
 
   override fun replaceQueue(tracks: List<AudioTrack>, startIndex: Int, autoPlay: Boolean) {
-    _playbackState.update { state ->
-      if (tracks.isEmpty()) {
-        state.copy(queue = emptyList(), currentIndex = -1, positionMs = 0L, status = PlaybackStatus.STOPPED)
-      } else {
-        val safeIdx = startIndex.coerceIn(0, tracks.lastIndex)
-        state.copy(
-          queue = tracks,
-          currentIndex = safeIdx,
-          positionMs = 0L,
-          status = if (autoPlay) PlaybackStatus.PLAYING else PlaybackStatus.STOPPED,
-        )
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        if (tracks.isEmpty()) {
+          state.copy(queue = emptyList(), currentIndex = -1, positionMs = 0L, status = PlaybackStatus.STOPPED)
+        } else {
+          val safeIdx = startIndex.coerceIn(0, tracks.lastIndex)
+          state.copy(
+            queue = tracks,
+            currentIndex = safeIdx,
+            positionMs = 0L,
+            status = if (autoPlay) PlaybackStatus.PLAYING else PlaybackStatus.STOPPED,
+          )
+        }
       }
-    }
-    if (autoPlay && tracks.isNotEmpty()) {
-      startTickerIfNeeded()
+      if (autoPlay && tracks.isNotEmpty()) {
+        startTickerIfNeeded()
+      }
     }
   }
 
   override fun enqueueTracks(tracks: List<AudioTrack>) {
     if (tracks.isEmpty()) return
-    _playbackState.update { state ->
-      val newQueue = state.queue + tracks
-      val newIndex = if (state.currentIndex < 0) 0 else state.currentIndex
-      state.copy(queue = newQueue, currentIndex = newIndex)
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        val newQueue = state.queue + tracks
+        val newIndex = if (state.currentIndex < 0) 0 else state.currentIndex
+        state.copy(queue = newQueue, currentIndex = newIndex)
+      }
     }
   }
 
   override fun removeIndices(indices: Set<Int>) {
     if (indices.isEmpty()) return
-    _playbackState.update { state ->
-      val currentTrackId = state.currentTrack?.id
-      val kept = state.queue.filterIndexed { idx, _ -> idx !in indices }
-      if (kept.isEmpty()) {
-        state.copy(queue = emptyList(), currentIndex = -1, positionMs = 0L, status = PlaybackStatus.STOPPED)
-      } else {
-        val newCurrent = kept.indexOfFirst { it.id == currentTrackId }.let { if (it >= 0) it else 0 }
-        state.copy(queue = kept, currentIndex = newCurrent)
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        val currentTrackId = state.currentTrack?.id
+        val kept = state.queue.filterIndexed { idx, _ -> idx !in indices }
+        if (kept.isEmpty()) {
+          state.copy(queue = emptyList(), currentIndex = -1, positionMs = 0L, status = PlaybackStatus.STOPPED)
+        } else {
+          val newCurrent = kept.indexOfFirst { it.id == currentTrackId }.let { if (it >= 0) it else 0 }
+          state.copy(queue = kept, currentIndex = newCurrent)
+        }
       }
     }
   }
 
   override fun cropIndices(indices: Set<Int>) {
     if (indices.isEmpty()) return
-    val all = _playbackState.value.queue.indices.toSet()
-    removeIndices(all - indices)
+    synchronized(stateLock) {
+      val all = _playbackState.value.queue.indices.toSet()
+      removeIndices(all - indices)
+    }
   }
 
   override fun clearQueue() {
-    stop()
-    _playbackState.update { it.copy(queue = emptyList(), currentIndex = -1, positionMs = 0L) }
+    synchronized(stateLock) {
+      stop()
+      _playbackState.update { it.copy(queue = emptyList(), currentIndex = -1, positionMs = 0L) }
+    }
   }
 
   override fun moveTrack(fromIndex: Int, toIndex: Int) {
-    _playbackState.update { state ->
-      if (fromIndex !in state.queue.indices || toIndex !in state.queue.indices || fromIndex == toIndex) {
-        return@update state
-      }
-      val mutable = state.queue.toMutableList()
-      val moved = mutable.removeAt(fromIndex)
-      mutable.add(toIndex, moved)
-      val newCurrent =
-        when {
-          state.currentIndex == fromIndex -> toIndex
-          fromIndex < state.currentIndex && toIndex >= state.currentIndex -> state.currentIndex - 1
-          fromIndex > state.currentIndex && toIndex <= state.currentIndex -> state.currentIndex + 1
-          else -> state.currentIndex
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        if (fromIndex !in state.queue.indices || toIndex !in state.queue.indices || fromIndex == toIndex) {
+          return@update state
         }
-      state.copy(queue = mutable, currentIndex = newCurrent)
+        val mutable = state.queue.toMutableList()
+        val moved = mutable.removeAt(fromIndex)
+        mutable.add(toIndex, moved)
+        val newCurrent =
+          when {
+            state.currentIndex == fromIndex -> toIndex
+            fromIndex < state.currentIndex && toIndex >= state.currentIndex -> state.currentIndex - 1
+            fromIndex > state.currentIndex && toIndex <= state.currentIndex -> state.currentIndex + 1
+            else -> state.currentIndex
+          }
+        state.copy(queue = mutable, currentIndex = newCurrent)
+      }
     }
   }
 
   override fun sortQueue(order: PlaylistSortOrder) {
-    _playbackState.update { state ->
-      val currentId = state.currentTrack?.id
-      val sorted =
-        when (order) {
-          PlaylistSortOrder.TITLE -> state.queue.sortedBy { it.displayLabel.lowercase() }
-          PlaylistSortOrder.FILENAME -> state.queue.sortedBy { it.fileName.lowercase() }
-          PlaylistSortOrder.PATH -> state.queue.sortedBy { "${it.folderPath}/${it.fileName}".lowercase() }
-        }
-      val newIdx = sorted.indexOfFirst { it.id == currentId }.let { if (it >= 0) it else state.currentIndex }
-      state.copy(queue = sorted, currentIndex = newIdx)
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        val currentId = state.currentTrack?.id
+        val sorted =
+          when (order) {
+            PlaylistSortOrder.TITLE -> state.queue.sortedBy { it.displayLabel.lowercase() }
+            PlaylistSortOrder.FILENAME -> state.queue.sortedBy { it.fileName.lowercase() }
+            PlaylistSortOrder.PATH -> state.queue.sortedBy { "${it.folderPath}/${it.fileName}".lowercase() }
+          }
+        val newIdx = sorted.indexOfFirst { it.id == currentId }.let { if (it >= 0) it else state.currentIndex }
+        state.copy(queue = sorted, currentIndex = newIdx)
+      }
     }
   }
 
   override fun reverseQueue() {
-    _playbackState.update { state ->
-      val currentId = state.currentTrack?.id
-      val reversed = state.queue.reversed()
-      val newIdx = reversed.indexOfFirst { it.id == currentId }.let { if (it >= 0) it else state.currentIndex }
-      state.copy(queue = reversed, currentIndex = newIdx)
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        val currentId = state.currentTrack?.id
+        val reversed = state.queue.reversed()
+        val newIdx = reversed.indexOfFirst { it.id == currentId }.let { if (it >= 0) it else state.currentIndex }
+        state.copy(queue = reversed, currentIndex = newIdx)
+      }
     }
   }
 
   override fun randomizeQueue() {
-    _playbackState.update { state ->
-      if (state.queue.size <= 1) return@update state
-      val currentId = state.currentTrack?.id
-      val shuffled = state.queue.shuffled()
-      val newIdx = shuffled.indexOfFirst { it.id == currentId }.let { if (it >= 0) it else 0 }
-      state.copy(queue = shuffled, currentIndex = newIdx)
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        if (state.queue.size <= 1) return@update state
+        val currentId = state.currentTrack?.id
+        val shuffled = state.queue.shuffled()
+        val newIdx = shuffled.indexOfFirst { it.id == currentId }.let { if (it >= 0) it else 0 }
+        state.copy(queue = shuffled, currentIndex = newIdx)
+      }
     }
   }
 
   override fun setVolume(volume0To255: Int) {
-    _playbackState.update {
-      it.copy(volume = volume0To255.coerceIn(PlaybackState.MIN_VOLUME, PlaybackState.MAX_VOLUME))
+    synchronized(stateLock) {
+      _playbackState.update {
+        it.copy(volume = volume0To255.coerceIn(PlaybackState.MIN_VOLUME, PlaybackState.MAX_VOLUME))
+      }
     }
   }
 
   override fun setBalance(balanceMinus127To127: Int) {
-    _playbackState.update {
-      it.copy(balance = balanceMinus127To127.coerceIn(PlaybackState.MIN_BALANCE, PlaybackState.MAX_BALANCE))
+    synchronized(stateLock) {
+      _playbackState.update {
+        it.copy(balance = balanceMinus127To127.coerceIn(PlaybackState.MIN_BALANCE, PlaybackState.MAX_BALANCE))
+      }
     }
   }
 
@@ -327,101 +387,123 @@ class FakeAudioEngineController(
    * Never reset while audio is PLAYING or PAUSED.
    */
   override fun applyColdLaunchVolumeResetIfStopped(defaultVolume: Int) {
-    _playbackState.update { state ->
-      if (state.status == PlaybackStatus.STOPPED) {
-        state.copy(volume = defaultVolume.coerceIn(PlaybackState.MIN_VOLUME, PlaybackState.MAX_VOLUME))
-      } else {
-        state
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        if (state.status == PlaybackStatus.STOPPED) {
+          state.copy(volume = defaultVolume.coerceIn(PlaybackState.MIN_VOLUME, PlaybackState.MAX_VOLUME))
+        } else {
+          state
+        }
       }
     }
   }
 
   override fun setEqEnabled(enabled: Boolean) {
-    _playbackState.update { it.copy(equalizer = it.equalizer.copy(enabled = enabled)) }
+    synchronized(stateLock) {
+      _playbackState.update { it.copy(equalizer = it.equalizer.copy(enabled = enabled)) }
+    }
   }
 
   override fun setEqAutoEnabled(enabled: Boolean) {
-    _playbackState.update { it.copy(equalizer = it.equalizer.copy(autoEnabled = enabled)) }
+    synchronized(stateLock) {
+      _playbackState.update { it.copy(equalizer = it.equalizer.copy(autoEnabled = enabled)) }
+    }
   }
 
   override fun setPreampDb(db: Float) {
-    _playbackState.update {
-      it.copy(equalizer = it.equalizer.copy(preampDb = WinampEqSpec.clampDb(db), activePresetName = "CUSTOM"))
+    synchronized(stateLock) {
+      _playbackState.update {
+        it.copy(equalizer = it.equalizer.copy(preampDb = WinampEqSpec.clampDb(db), activePresetName = "CUSTOM"))
+      }
     }
   }
 
   override fun setEqBandDb(bandIndex: Int, db: Float) {
     if (bandIndex !in 0 until WinampEqSpec.BAND_COUNT) return
-    _playbackState.update { state ->
-      val updated = state.equalizer.bandsDb.toMutableList()
-      updated[bandIndex] = WinampEqSpec.clampDb(db)
-      state.copy(equalizer = state.equalizer.copy(bandsDb = updated, activePresetName = "CUSTOM"))
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        val updated = state.equalizer.bandsDb.toMutableList()
+        updated[bandIndex] = WinampEqSpec.clampDb(db)
+        state.copy(equalizer = state.equalizer.copy(bandsDb = updated, activePresetName = "CUSTOM"))
+      }
     }
   }
 
   override fun setEqBands(bandsDb: List<Float>) {
     if (bandsDb.size != WinampEqSpec.BAND_COUNT) return
-    _playbackState.update { state ->
-      state.copy(
-        equalizer =
-          state.equalizer.copy(
-            bandsDb = bandsDb.map(WinampEqSpec::clampDb),
-            activePresetName = "CUSTOM",
-          ),
-      )
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        state.copy(
+          equalizer =
+            state.equalizer.copy(
+              bandsDb = bandsDb.map(WinampEqSpec::clampDb),
+              activePresetName = "CUSTOM",
+            ),
+        )
+      }
     }
   }
 
   override fun applyEqPreset(preset: EqPreset) {
-    _playbackState.update { state ->
-      state.copy(
-        equalizer =
-          state.equalizer.copy(
-            preampDb = WinampEqSpec.clampDb(preset.preampDb),
-            bandsDb = preset.bandsDb.map(WinampEqSpec::clampDb),
-            activePresetName = preset.name,
-          ),
-      )
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        state.copy(
+          equalizer =
+            state.equalizer.copy(
+              preampDb = WinampEqSpec.clampDb(preset.preampDb),
+              bandsDb = preset.bandsDb.map(WinampEqSpec::clampDb),
+              activePresetName = preset.name,
+            ),
+        )
+      }
     }
   }
 
   override fun toggleShuffle() {
-    _playbackState.update { it.copy(shuffle = !it.shuffle) }
+    synchronized(stateLock) {
+      _playbackState.update { it.copy(shuffle = !it.shuffle) }
+    }
   }
 
   override fun cycleRepeatMode() {
-    _playbackState.update { state ->
-      val next =
-        when (state.repeatMode) {
-          RepeatMode.OFF -> RepeatMode.ALL
-          RepeatMode.ALL -> RepeatMode.ONE
-          RepeatMode.ONE -> RepeatMode.OFF
-        }
-      state.copy(repeatMode = next)
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        val next =
+          when (state.repeatMode) {
+            RepeatMode.OFF -> RepeatMode.ALL
+            RepeatMode.ALL -> RepeatMode.ONE
+            RepeatMode.ONE -> RepeatMode.OFF
+          }
+        state.copy(repeatMode = next)
+      }
     }
   }
 
   override fun toggleTimeDisplayMode() {
-    _playbackState.update { state ->
-      val next =
-        if (state.timeDisplayMode == TimeDisplayMode.ELAPSED) {
-          TimeDisplayMode.REMAINING
-        } else {
-          TimeDisplayMode.ELAPSED
-        }
-      state.copy(timeDisplayMode = next)
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        val next =
+          if (state.timeDisplayMode == TimeDisplayMode.ELAPSED) {
+            TimeDisplayMode.REMAINING
+          } else {
+            TimeDisplayMode.ELAPSED
+          }
+        state.copy(timeDisplayMode = next)
+      }
     }
   }
 
   override fun cycleVisualizerMode() {
-    _playbackState.update { state ->
-      val next =
-        when (state.visualizerMode) {
-          VisualizerMode.SPECTRUM -> VisualizerMode.OSCILLOSCOPE
-          VisualizerMode.OSCILLOSCOPE -> VisualizerMode.OFF
-          VisualizerMode.OFF -> VisualizerMode.SPECTRUM
-        }
-      state.copy(visualizerMode = next)
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        val next =
+          when (state.visualizerMode) {
+            VisualizerMode.SPECTRUM -> VisualizerMode.OSCILLOSCOPE
+            VisualizerMode.OSCILLOSCOPE -> VisualizerMode.OFF
+            VisualizerMode.OFF -> VisualizerMode.SPECTRUM
+          }
+        state.copy(visualizerMode = next)
+      }
     }
   }
 }

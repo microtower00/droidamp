@@ -3,6 +3,7 @@ package com.droidamp.player.ui.sheet
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,15 +16,25 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.droidamp.player.domain.model.AudioTrack
 import com.droidamp.player.domain.model.PlaylistSortOrder
 import com.droidamp.player.domain.model.formatWinampDuration
@@ -39,6 +50,34 @@ enum class PlaylistMicroMenu {
   REM,
   MISC,
   LIST,
+}
+
+internal data class PlaylistDisplayEntry(
+  val originalIndex: Int,
+  val track: AudioTrack,
+  val rowKey: String,
+)
+
+internal fun buildPlaylistDisplayEntries(
+  queue: List<AudioTrack>,
+  jumpFilterQuery: String,
+): List<PlaylistDisplayEntry> {
+  val seenCounts = HashMap<String, Int>(queue.size)
+  val allEntries =
+    queue.mapIndexed { idx, track ->
+      val occurrence = seenCounts.getOrDefault(track.id, 0)
+      seenCounts[track.id] = occurrence + 1
+      PlaylistDisplayEntry(
+        originalIndex = idx,
+        track = track,
+        rowKey = "${track.id}#$occurrence",
+      )
+    }
+  if (jumpFilterQuery.isBlank()) return allEntries
+  return allEntries.filter { entry ->
+    entry.track.displayLabel.contains(jumpFilterQuery, ignoreCase = true) ||
+      entry.track.fileName.contains(jumpFilterQuery, ignoreCase = true)
+  }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -70,19 +109,18 @@ fun PlaylistEditorView(
   onSavePlaylist: () -> Unit,
   onLoadPlaylist: () -> Unit,
   modifier: Modifier = Modifier,
+  onMoveTrack: (fromIndex: Int, toIndex: Int) -> Unit = { _, _ -> },
 ) {
   val skin = LocalDroidAmpSkin.current
   val filteredEntries =
-    queue.mapIndexedNotNull { idx, track ->
-      if (jumpFilterQuery.isBlank() ||
-        track.displayLabel.contains(jumpFilterQuery, ignoreCase = true) ||
-        track.fileName.contains(jumpFilterQuery, ignoreCase = true)
-      ) {
-        idx to track
-      } else {
-        null
-      }
+    remember(queue, jumpFilterQuery) {
+      buildPlaylistDisplayEntries(queue = queue, jumpFilterQuery = jumpFilterQuery)
     }
+  val listState = rememberLazyListState()
+  var draggedOriginalIndex by remember { mutableStateOf<Int?>(null) }
+  var dragOffsetY by remember { mutableFloatStateOf(0f) }
+  val latestEntries by rememberUpdatedState(filteredEntries)
+  val latestOnMoveTrack by rememberUpdatedState(onMoveTrack)
 
   Column(
     modifier = modifier.fillMaxSize(),
@@ -146,13 +184,84 @@ fun PlaylistEditorView(
           )
         }
       } else {
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
-          itemsIndexed(
+        LazyColumn(
+          state = listState,
+          modifier =
+            Modifier
+              .fillMaxSize()
+              .pointerInput(Unit) {
+                detectDragGesturesAfterLongPress(
+                  onDragStart = { offset ->
+                    val hitItem =
+                      listState.layoutInfo.visibleItemsInfo.firstOrNull { item ->
+                        offset.y >= item.offset && offset.y <= item.offset + item.size
+                      }
+                    val entry = hitItem?.let { latestEntries.getOrNull(it.index) }
+                    if (entry != null) {
+                      draggedOriginalIndex = entry.originalIndex
+                      dragOffsetY = 0f
+                    }
+                  },
+                  onDrag = { change, dragAmount ->
+                    val activeOrigIdx = draggedOriginalIndex ?: return@detectDragGesturesAfterLongPress
+                    change.consume()
+                    dragOffsetY += dragAmount.y
+
+                    val entries = latestEntries
+                    val currentFilteredIdx = entries.indexOfFirst { it.originalIndex == activeOrigIdx }
+                    val currentEntry = entries.getOrNull(currentFilteredIdx) ?: return@detectDragGesturesAfterLongPress
+                    val visibleItems = listState.layoutInfo.visibleItemsInfo
+                    val draggedItem = visibleItems.firstOrNull { it.key == currentEntry.rowKey }
+                      ?: return@detectDragGesturesAfterLongPress
+
+                    // Wait for layout pass if state update has already moved the entry.
+                    if (draggedItem.index != currentFilteredIdx) {
+                      return@detectDragGesturesAfterLongPress
+                    }
+
+                    val draggedCenterY = draggedItem.offset + draggedItem.size * 0.5f + dragOffsetY
+                    val targetItem =
+                      when {
+                        dragOffsetY > 0f ->
+                          visibleItems.firstOrNull { item ->
+                            item.index == draggedItem.index + 1 &&
+                              draggedCenterY > item.offset + item.size * 0.5f
+                          }
+                        dragOffsetY < 0f ->
+                          visibleItems.firstOrNull { item ->
+                            item.index == draggedItem.index - 1 &&
+                              draggedCenterY < item.offset + item.size * 0.5f
+                          }
+                        else -> null
+                      } ?: return@detectDragGesturesAfterLongPress
+
+                    val targetEntry = entries.getOrNull(targetItem.index) ?: return@detectDragGesturesAfterLongPress
+                    if (targetEntry.originalIndex != currentEntry.originalIndex) {
+                      latestOnMoveTrack(currentEntry.originalIndex, targetEntry.originalIndex)
+                      draggedOriginalIndex = targetEntry.originalIndex
+                      dragOffsetY += (draggedItem.offset - targetItem.offset).toFloat()
+                    }
+                  },
+                  onDragEnd = {
+                    draggedOriginalIndex = null
+                    dragOffsetY = 0f
+                  },
+                  onDragCancel = {
+                    draggedOriginalIndex = null
+                    dragOffsetY = 0f
+                  },
+                )
+              },
+        ) {
+          items(
             items = filteredEntries,
-            key = { _, pair -> "${pair.first}-${pair.second.id}" },
-          ) { _, (originalIndex, track) ->
+            key = { it.rowKey },
+          ) { entry ->
+            val originalIndex = entry.originalIndex
+            val track = entry.track
             val isCurrent = originalIndex == currentIndex
             val isSelected = originalIndex in selectedIndices
+            val isDragging = draggedOriginalIndex == originalIndex
             val rowBg =
               if (isSelected) skin.playlist.selectedBackground else skin.playlist.normalBackground
             val rowTextColor =
@@ -166,6 +275,10 @@ fun PlaylistEditorView(
               modifier =
                 Modifier
                   .fillMaxWidth()
+                  .zIndex(if (isDragging) 1f else 0f)
+                  .graphicsLayer {
+                    translationY = if (isDragging) dragOffsetY else 0f
+                  }
                   .background(rowBg)
                   .combinedClickable(
                     onClick = { onTrackClick(originalIndex) },
@@ -174,6 +287,12 @@ fun PlaylistEditorView(
                   .padding(horizontal = 6.dp, vertical = 7.dp),
               verticalAlignment = Alignment.CenterVertically,
             ) {
+              Text(
+                text = "≡",
+                style = skin.typography.microLabel,
+                color = if (isSelected || isCurrent) rowTextColor else skin.playlist.indexNumberText,
+                modifier = Modifier.padding(end = 4.dp),
+              )
               Text(
                 text = "${originalIndex + 1}.",
                 style = skin.typography.trackRow,

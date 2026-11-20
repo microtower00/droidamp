@@ -26,6 +26,21 @@ fun VfdVisualizerCanvas(
   onCycleMode: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
+  VfdVisualizerCanvas(
+    frameProvider = { frame },
+    mode = mode,
+    onCycleMode = onCycleMode,
+    modifier = modifier,
+  )
+}
+
+@Composable
+fun VfdVisualizerCanvas(
+  frameProvider: () -> VisualizerFrame,
+  mode: VisualizerMode,
+  onCycleMode: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
   val skin = LocalDroidAmpSkin.current
   val vis = skin.visualizer
 
@@ -56,6 +71,7 @@ fun VfdVisualizerCanvas(
 
     when (mode) {
       VisualizerMode.SPECTRUM -> {
+        val frame = frameProvider()
         val barCount = frame.spectrumBars.size.coerceAtLeast(1)
         val gap = 2f
         val barWidth = ((size.width - gap * (barCount - 1)) / barCount).coerceAtLeast(2f)
@@ -91,6 +107,7 @@ fun VfdVisualizerCanvas(
         }
       }
       VisualizerMode.OSCILLOSCOPE -> {
+        val frame = frameProvider()
         val samples = frame.waveform
         if (samples.size >= 2) {
           val centerY = size.height * 0.5f

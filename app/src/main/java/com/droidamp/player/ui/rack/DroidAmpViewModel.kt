@@ -3,8 +3,11 @@ package com.droidamp.player.ui.rack
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.droidamp.player.domain.contract.AudioEngineController
+import com.droidamp.player.domain.contract.AutoEqPresetResolver
 import com.droidamp.player.domain.contract.MusicSourceRepository
+import com.droidamp.player.domain.contract.PlaylistFileCodec
 import com.droidamp.player.domain.model.AudioTrack
+import com.droidamp.player.domain.model.ClassicWinampPresets
 import com.droidamp.player.domain.model.EqPreset
 import com.droidamp.player.domain.model.FolderContents
 import com.droidamp.player.domain.model.FolderEntry
@@ -13,11 +16,22 @@ import com.droidamp.player.domain.model.PlaybackState
 import com.droidamp.player.domain.model.PlaylistSortOrder
 import com.droidamp.player.domain.model.SavedPlaylistEntry
 import com.droidamp.player.domain.model.SheetMode
+import com.droidamp.player.domain.model.StorageBackend
 import com.droidamp.player.domain.model.VisualizerFrame
+import com.droidamp.player.domain.model.WinampEqSpec
+import com.droidamp.player.interop.AutoEqMatcher
+import com.droidamp.player.interop.WinampPlaylistCodec
+import com.droidamp.player.interop.WinampPresetLibrary
 import com.droidamp.player.ui.sheet.PlaylistMicroMenu
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -35,16 +49,27 @@ data class RackUiState(
   val jumpFilterQuery: String = "",
   val activeMicroMenu: PlaylistMicroMenu = PlaylistMicroMenu.NONE,
   val statusBanner: String? = null,
+  val availableEqPresets: List<EqPreset> = ClassicWinampPresets.ALL,
 )
 
 class DroidAmpViewModel(
   private val audioEngine: AudioEngineController,
   private val musicRepository: MusicSourceRepository,
+  private val autoEqResolver: AutoEqPresetResolver = AutoEqMatcher(),
+  private val playlistCodec: PlaylistFileCodec = WinampPlaylistCodec(),
+  private val autoEqCatalogProvider: AutoEqCatalogProvider = EmptyAutoEqCatalogProvider,
 ) : ViewModel() {
+
+  private data class AutoEqTriggerKey(
+    val track: AudioTrack?,
+    val autoEnabled: Boolean,
+    val rootUris: List<String>,
+  )
 
   val playbackState: StateFlow<PlaybackState> = audioEngine.playbackState
   val visualizerFrame: StateFlow<VisualizerFrame> = audioEngine.visualizerFrame
   val linkedRoots: StateFlow<List<FolderEntry>> = musicRepository.linkedRoots
+  val storageBackend: StateFlow<StorageBackend> = musicRepository.storageBackend
 
   private val _uiState = MutableStateFlow(RackUiState())
   val uiState: StateFlow<RackUiState> = _uiState.asStateFlow()
@@ -53,12 +78,85 @@ class DroidAmpViewModel(
     // ADR-007: Apply cold-launch internal volume reset (~80% = 204) ONLY if playback is stopped.
     audioEngine.applyColdLaunchVolumeResetIfStopped(PlaybackState.DEFAULT_COLD_LAUNCH_VOLUME)
     refreshLibraryFromCurrentRoot()
+    observeLinkedRootHydration()
+    observeAutoEqMatching()
+  }
+
+  private fun observeLinkedRootHydration() {
+    viewModelScope.launch {
+      musicRepository.linkedRoots
+        .map { roots -> roots.map { it.uriString } }
+        .distinctUntilChanged()
+        .drop(1)
+        .collect {
+          refreshLibraryFromCurrentRoot()
+        }
+    }
+  }
+
+  private fun observeAutoEqMatching() {
+    viewModelScope.launch {
+      combine(
+        playbackState
+          .map { it.currentTrack to it.equalizer.autoEnabled }
+          .distinctUntilChanged { old, new ->
+            old.first?.id == new.first?.id &&
+              old.first?.uriString == new.first?.uriString &&
+              old.second == new.second
+          },
+        musicRepository.linkedRoots
+          .map { roots -> roots.map { it.uriString } }
+          .distinctUntilChanged(),
+      ) { (track, autoEnabled), rootUris ->
+        AutoEqTriggerKey(track = track, autoEnabled = autoEnabled, rootUris = rootUris)
+      }.collectLatest { trigger ->
+        val catalog =
+          try {
+            autoEqCatalogProvider.loadCatalog(trigger.rootUris, trigger.track)
+          } catch (ce: CancellationException) {
+            throw ce
+          } catch (_: Throwable) {
+            AutoEqCatalog()
+          }
+        val mergedPresets =
+          WinampPresetLibrary.mergePresets(catalog.extraPresets, ClassicWinampPresets.ALL)
+        _uiState.update { it.copy(availableEqPresets = mergedPresets) }
+
+        val track = trigger.track ?: return@collectLatest
+        if (!trigger.autoEnabled) return@collectLatest
+
+        val latest = playbackState.value
+        if (!latest.equalizer.autoEnabled ||
+          latest.currentTrack?.id != track.id ||
+          latest.currentTrack?.uriString != track.uriString
+        ) {
+          return@collectLatest
+        }
+
+        val matched =
+          autoEqResolver.resolveForTrack(track, catalog.rules, mergedPresets) ?: return@collectLatest
+        val currentEq = latest.equalizer
+        val clampedPreamp = WinampEqSpec.clampDb(matched.preampDb)
+        val clampedBands = matched.bandsDb.map(WinampEqSpec::clampDb)
+        val alreadyApplied =
+          currentEq.activePresetName.equals(matched.name, ignoreCase = true) &&
+            currentEq.preampDb == clampedPreamp &&
+            currentEq.bandsDb == clampedBands
+        if (!alreadyApplied) {
+          audioEngine.applyEqPreset(matched)
+        }
+      }
+    }
+  }
+
+  fun refreshLibrary() {
+    refreshLibraryFromCurrentRoot()
   }
 
   private fun refreshLibraryFromCurrentRoot() {
     viewModelScope.launch {
-      val contents = musicRepository.browseFolder(null)
-      val lists = musicRepository.listPlaylists()
+      val contents = runCatching { musicRepository.browseFolder(null) }.getOrDefault(FolderContents.EMPTY)
+      val lists = runCatching { musicRepository.listPlaylists() }.getOrDefault(emptyList())
       _uiState.update {
         it.copy(
           folderContents = contents,
@@ -73,10 +171,58 @@ class DroidAmpViewModel(
   // --- First-Run SAF Onboarding ---
 
   fun onSelectMusicFolder(treeUriString: String = FakeMusicSourceRepository.ROOT_URI) {
+    val targetUri = treeUriString.trim()
     viewModelScope.launch {
-      musicRepository.linkSafRoot(treeUriString)
-      val contents = musicRepository.browseFolder(null)
-      val lists = musicRepository.listPlaylists()
+      val linked =
+        runCatching {
+          musicRepository.linkSafRoot(treeUriString)
+          if (targetUri.isEmpty() || musicRepository.linkedRoots.value.none { it.uriString == targetUri }) {
+            false
+          } else {
+            val contents = musicRepository.browseFolder(null)
+            val lists = musicRepository.listPlaylists()
+            _uiState.update {
+              it.copy(
+                folderContents = contents,
+                playlists = lists,
+                sheetMode = SheetMode.LIBRARY,
+                isSheetExpanded = true,
+                libraryTab = LibraryTab.FOLDERS,
+                selectedLibraryTrackIds = emptySet(),
+                selectedLibraryPlaylistId = null,
+                statusBanner = "LINKED MUSIC FOLDER (SAF)",
+              )
+            }
+            true
+          }
+        }.getOrDefault(false)
+
+      if (!linked) {
+        _uiState.update {
+          it.copy(
+            folderContents =
+              if (musicRepository.linkedRoots.value.isEmpty()) {
+                FolderContents.EMPTY
+              } else {
+                it.folderContents
+              },
+            statusBanner = "UNABLE TO LINK MUSIC FOLDER — SELECT A READABLE FOLDER",
+          )
+        }
+      }
+    }
+  }
+
+  fun onStoragePermissionResult(granted: Boolean) {
+    if (!granted) {
+      _uiState.update {
+        it.copy(statusBanner = "AUDIO STORAGE PERMISSION DENIED")
+      }
+      return
+    }
+    viewModelScope.launch {
+      val contents = runCatching { musicRepository.browseFolder(null) }.getOrDefault(FolderContents.EMPTY)
+      val lists = runCatching { musicRepository.listPlaylists() }.getOrDefault(emptyList())
       _uiState.update {
         it.copy(
           folderContents = contents,
@@ -84,7 +230,9 @@ class DroidAmpViewModel(
           sheetMode = SheetMode.LIBRARY,
           isSheetExpanded = true,
           libraryTab = LibraryTab.FOLDERS,
-          statusBanner = "LINKED MUSIC FOLDER (SAF)",
+          selectedLibraryTrackIds = emptySet(),
+          selectedLibraryPlaylistId = null,
+          statusBanner = "MEDIASTORE LIBRARY READY",
         )
       }
     }
@@ -173,13 +321,18 @@ class DroidAmpViewModel(
   }
 
   fun movePlaylistTrack(fromIndex: Int, toIndex: Int) {
+    val queueSize = playbackState.value.queue.size
+    if (fromIndex !in 0 until queueSize || toIndex !in 0 until queueSize || fromIndex == toIndex) {
+      return
+    }
     audioEngine.moveTrack(fromIndex, toIndex)
     _uiState.update { state ->
       val updatedSel =
         state.selectedPlaylistIndices.map { idx ->
-          when (idx) {
-            fromIndex -> toIndex
-            toIndex -> fromIndex
+          when {
+            idx == fromIndex -> toIndex
+            fromIndex < toIndex && idx in (fromIndex + 1)..toIndex -> idx - 1
+            fromIndex > toIndex && idx in toIndex until fromIndex -> idx + 1
             else -> idx
           }
         }.toSet()
@@ -242,8 +395,87 @@ class DroidAmpViewModel(
     _uiState.update { it.copy(jumpFilterQuery = query) }
   }
 
-  fun onSavePlaylistStub() {
-    _uiState.update { it.copy(statusBanner = "M3U8 EXPORT ENGINE LANDS IN MILESTONE 4") }
+  fun savePlaylistAsM3u8(
+    fileName: String = DEFAULT_SAVED_PLAYLIST_NAME,
+    onNeedDocumentPickerFallback: ((fileName: String, content: String) -> Unit)? = null,
+  ) {
+    val queue = playbackState.value.queue
+    if (queue.isEmpty()) {
+      _uiState.update {
+        it.copy(
+          activeMicroMenu = PlaylistMicroMenu.NONE,
+          statusBanner = "PLAYLIST EMPTY — NOTHING TO SAVE",
+        )
+      }
+      return
+    }
+
+    viewModelScope.launch {
+      val content = playlistCodec.encodeM3u8(queue)
+      val result =
+        runCatching {
+          musicRepository.saveM3u8Playlist(fileName, content)
+        }.getOrElse { Result.failure(it) }
+
+      result
+        .onSuccess { entry ->
+          val refreshedPlaylists =
+            runCatching { musicRepository.listPlaylists() }.getOrDefault(_uiState.value.playlists)
+          val upperName =
+            if (entry.name.endsWith(".m3u8", ignoreCase = true)) {
+              entry.name.uppercase()
+            } else {
+              "${entry.name.uppercase()}.M3U8"
+            }
+          _uiState.update {
+            it.copy(
+              playlists = refreshedPlaylists,
+              activeMicroMenu = PlaylistMicroMenu.NONE,
+              statusBanner = "SAVED $upperName (${queue.size} TRACKS)",
+            )
+          }
+        }
+        .onFailure { error ->
+          if (error is UnsupportedOperationException || onNeedDocumentPickerFallback == null) {
+            val banner =
+              if (error is UnsupportedOperationException) {
+                "SAVE .M3U8 UNAVAILABLE IN PREVIEW"
+              } else {
+                "SAVE .M3U8 FAILED: ${error.message?.take(40) ?: "STORAGE ERROR"}"
+              }
+            _uiState.update {
+              it.copy(
+                activeMicroMenu = PlaylistMicroMenu.NONE,
+                statusBanner = banner,
+              )
+            }
+          } else {
+            _uiState.update {
+              it.copy(
+                activeMicroMenu = PlaylistMicroMenu.NONE,
+                statusBanner = "CHOOSE EXPORT LOCATION FOR $fileName",
+              )
+            }
+            onNeedDocumentPickerFallback(fileName, content)
+          }
+        }
+    }
+  }
+
+  fun onM3u8FallbackExportResult(
+    success: Boolean,
+    displayLabel: String,
+  ) {
+    _uiState.update {
+      it.copy(
+        statusBanner =
+          if (success) {
+            "EXPORTED ${displayLabel.uppercase()}"
+          } else {
+            "M3U8 EXPORT CANCELLED OR FAILED"
+          },
+      )
+    }
   }
 
   fun onLoadPlaylistShortcut() {
@@ -430,6 +662,9 @@ class DroidAmpViewModel(
     }
   }
 
+  companion object {
+    const val DEFAULT_SAVED_PLAYLIST_NAME = "droidamp_playlist.m3u8"
+  }
 }
 
 /**

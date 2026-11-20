@@ -63,6 +63,7 @@ fun EqualizerPanel(
   onBandChange: (bandIndex: Int, db: Float) -> Unit,
   onApplyPreset: (EqPreset) -> Unit,
   modifier: Modifier = Modifier,
+  availablePresets: List<EqPreset> = ClassicWinampPresets.ALL,
 ) {
   val skin = LocalDroidAmpSkin.current
   var activeDragReadout by remember { mutableStateOf<String?>(null) }
@@ -141,7 +142,7 @@ fun EqualizerPanel(
               expanded = showPresetsMenu,
               title = "EQ PRESETS",
               actions =
-                ClassicWinampPresets.ALL.map { preset ->
+                availablePresets.map { preset ->
                   MicroMenuAction(label = preset.name) {
                     onApplyPreset(preset)
                   }

@@ -63,6 +63,53 @@ fun MainDeckPanel(
   onTogglePlaylistSheet: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
+  MainDeckPanel(
+    playbackState = playbackState,
+    visualizerFrameProvider = { visualizerFrame },
+    isEqVisible = isEqVisible,
+    isSheetExpanded = isSheetExpanded,
+    onToggleTimeMode = onToggleTimeMode,
+    onCycleVisualizerMode = onCycleVisualizerMode,
+    onVolumeChange = onVolumeChange,
+    onBalanceChange = onBalanceChange,
+    onSeekTo = onSeekTo,
+    onPrev = onPrev,
+    onPlay = onPlay,
+    onPause = onPause,
+    onStop = onStop,
+    onNext = onNext,
+    onEject = onEject,
+    onToggleShuffle = onToggleShuffle,
+    onCycleRepeat = onCycleRepeat,
+    onToggleEqVisible = onToggleEqVisible,
+    onTogglePlaylistSheet = onTogglePlaylistSheet,
+    modifier = modifier,
+  )
+}
+
+@Composable
+fun MainDeckPanel(
+  playbackState: PlaybackState,
+  visualizerFrameProvider: () -> VisualizerFrame,
+  isEqVisible: Boolean,
+  isSheetExpanded: Boolean,
+  onToggleTimeMode: () -> Unit,
+  onCycleVisualizerMode: () -> Unit,
+  onVolumeChange: (Int) -> Unit,
+  onBalanceChange: (Int) -> Unit,
+  onSeekTo: (Long) -> Unit,
+  onPrev: () -> Unit,
+  onPlay: () -> Unit,
+  onPause: () -> Unit,
+  onStop: () -> Unit,
+  onNext: () -> Unit,
+  onEject: () -> Unit,
+  onToggleShuffle: () -> Unit,
+  onCycleRepeat: () -> Unit,
+  onToggleEqVisible: () -> Unit,
+  onTogglePlaylistSheet: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
   val skin = LocalDroidAmpSkin.current
   var transientMarqueeOverride by remember { mutableStateOf<String?>(null) }
   var isDraggingSeek by remember { mutableStateOf(false) }
@@ -142,7 +189,7 @@ fun MainDeckPanel(
                     .background(skin.visualizer.background),
               ) {
                 VfdVisualizerCanvas(
-                  frame = visualizerFrame,
+                  frameProvider = visualizerFrameProvider,
                   mode = playbackState.visualizerMode,
                   onCycleMode = onCycleVisualizerMode,
                 )

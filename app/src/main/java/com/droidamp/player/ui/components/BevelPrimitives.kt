@@ -13,11 +13,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -28,6 +31,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -335,19 +339,21 @@ fun RetroMicroMenuPopup(
   title: String,
   actions: List<MicroMenuAction>,
   onDismiss: () -> Unit,
+  maxMenuHeight: Dp = 260.dp,
 ) {
   if (!expanded) return
   val skin = LocalDroidAmpSkin.current
+  val verticalOffsetPx = with(LocalDensity.current) { (-38).dp.roundToPx() }
   Popup(
     alignment = Alignment.BottomCenter,
-    offset = IntOffset(0, -110),
+    offset = IntOffset(0, verticalOffsetPx),
     onDismissRequest = onDismiss,
     properties = PopupProperties(focusable = true),
   ) {
     Column(
       modifier =
         Modifier
-          .widthIn(min = 160.dp, max = 210.dp)
+          .widthIn(min = 160.dp, max = 240.dp)
           .background(skin.chassis.panelSurface)
           .raisedBevel(skin)
           .padding(3.dp),
@@ -357,31 +363,43 @@ fun RetroMicroMenuPopup(
         text = title.uppercase(),
         style = skin.typography.microLabel,
         color = skin.chassis.titleBarText,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
         modifier =
           Modifier
             .fillMaxWidth()
             .background(skin.chassis.titleBarActiveStart)
             .padding(horizontal = 6.dp, vertical = 3.dp),
       )
-      actions.forEach { action ->
-        Box(
-          modifier =
-            Modifier
-              .fillMaxWidth()
-              .background(skin.vfd.wellBackground)
-              .recessedBevel(skin, thickness = 1.dp)
-              .clickable {
-                onDismiss()
-                action.onClick()
-              }
-              .padding(horizontal = 8.dp, vertical = 7.dp),
-        ) {
-          Text(
-            text = action.label.uppercase(),
-            style = skin.typography.buttonLabel,
-            color = skin.vfd.phosphorPrimary,
-            maxLines = 1,
-          )
+      Column(
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .heightIn(max = maxMenuHeight)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+      ) {
+        actions.forEach { action ->
+          Box(
+            modifier =
+              Modifier
+                .fillMaxWidth()
+                .background(skin.vfd.wellBackground)
+                .recessedBevel(skin, thickness = 1.dp)
+                .clickable {
+                  onDismiss()
+                  action.onClick()
+                }
+                .padding(horizontal = 8.dp, vertical = 7.dp),
+          ) {
+            Text(
+              text = action.label.uppercase(),
+              style = skin.typography.buttonLabel,
+              color = skin.vfd.phosphorPrimary,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
         }
       }
     }
