@@ -121,12 +121,22 @@ Core parsers and serializers are implemented in the domain/data layer early (tho
    - Folder & Playlist browser (`FOLDERS` | `PLAYLISTS`) with select-first track safety, `[▶]` / `[+]` actions, drag-to-reorder queue editor, `REM`/`MISC`/`LIST` micro-menus, and auto-focused Jump-to-Track filter.
 4. **Milestone 4 — Winamp Format Engines (Backend Only, Unit-Tested)** *(Done)*:
    - Pure Kotlin `.eqf`, `winamp.q1`/`q2`, `winamp.ini`, and `.m3u`/`.m3u8`/`.pls` importers & exporters + 18 built-in classic Winamp EQ presets + `AUTO` preset matching.
-5. **Milestone 5 — `.wsz` / Native Skin Engine** *(In Progress on `feat/m5-wsz-skin-engine`)*:
-   - Deterministic `.wsz` parser (`viscolor.txt`, `pledit.txt`, `cbuttons`, `shufrep`, `monoster`, `nums_ex`, `playpaus`, `volume`/`balance`/`posbar`, `eqmain`, `titlebar`) + `SkinRepository` & DataStore persistence.
-   - **Open Design Question (`ADR-027`)**: Resolve non-self-contained 24-bit BMP seams, skin the bottom Queue/Library header & EQ spline graph, and evaluate an augmented `.wsz` / native format (with alpha overrides for spriteless mobile buttons) or Classic `275×116` canvas mode so skins feel 100% native.
-6. **Milestone 6 — Settings UI & Final Integration** *(Planned — see [SETTINGS_ROADMAP.md](SETTINGS_ROADMAP.md))*:
-   - Dedicated Settings UI organized along the **Classic Winamp (1:1) ↔ Mobile-Optimized** authenticity spectrum.
-   - Post-onboarding SAF folder management, SAF/MediaStore toggle, Hardware Volume Rocker ↔ App Volume linking option, cold-launch volume reset toggle, ReplayGain/Crossfade/Gapless controls, Winamp `.eqf`/`q1`/`q2`/`winamp.ini` import & export triggers, and skin selector.
+5. **Milestone 5 — `.wsz` / Augmented Native Skin Engine** *(Spec Locked per `ADR-028`; prototype on `feat/m5-wsz-skin-engine`)*:
+   - Keep **`.wsz`** as the single universal container (augmented skins are `.wsz` zips with optional `droidamp.json` + alpha-PNG overrides).
+   - **Legacy `.wsz` Smart Default**: Unmodified 1999 `.wsz` files render extracted OG colors + crisp vector chrome by default (zero rectangular BMP seams), with an optional **"Classic BMP Sprites"** toggle.
+   - **Mobile Sprite Extensibility**: Augmented `.wsz` supports optional alpha-PNG sprites for every mobile control (`QUEUE`, `LIBRARY`, `REM`, `MISC`, `LIST`, `[▶]`, `[+]`), falling back cleanly to `droidamp.json` tokens/shape styles.
+   - **Header Consistency**: All 3 panel titlebars (`Deck`, `EQ`, `Queue/Library`) are themed together consistently, with **2 distinct state sprites** on the `Queue/Library` header (collapsed vs. expanded).
+   - Ships **1–2 built-in Augmented `.wsz` showcase skins** + a Python CLI converter tool in `tools/` for upgrading legacy `.wsz` archives.
+6. **Milestone 6 — Settings UI, On-Deck EQ Presets & Recovery** *(UX Spec Locked per `ADR-029`)*:
+   - **Skin-Aware Beveled Rack Preferences** with **`[OG]` micro-badges** highlighting classic 1999 Winamp options, ordered for **First-Week Tuners** (`Phone & Controls`, `Music Library`, `Appearance → Skins`, `Audio & Playback`, `Winamp Migration & Data`, `About DroidAmp`).
+   - **Dual Entry Point A/B Test** (switchable via temp dev toggle in `About`): Mode A (Top-right Titlebar `⚙` → full-screen beveled Preferences) vs. Mode B (Always-accessible square `⚙` next to `[QUEUE] | [LIBRARY]` → expands drawer + one-way lateral pan into gated Settings pane).
+   - **Human-Friendly Library & Metadata Cache**: `All Device Music` vs. `Selected Folders` (zero SAF/MediaStore jargon), persisted SAF folders across switches, lightweight local metadata index cache for instant launch/switching.
+   - **Nested 2-Wide Visual Skin Browser**: `Settings → Skins` 2-column live mini-preview grid, `+ Import .wsz`, delete imported skins, Legacy `.wsz` Vector vs. Raw BMP toggle, and Auto-Contrast Guard override.
+   - **Audio & Controls**: 3-way **Track Transition** radio (`Standard` / `Gapless` / `Crossfade` with persisted `1s–12s` duration), ReplayGain + Preamp, Hardware Volume Keys (`Sync System` default vs. `Independent [OG]`), Headset/BT pause/resume, Keep Screen On, Queue Tap Action, Haptics, Startup Volume, and Portrait Orientation Lock.
+   - **On-Deck OG Winamp EQ `PRESETS` Menu**: Load/Save/Auto-Load/Delete/Import `.eqf`/Export `.eqf` directly from the EQ deck; bulk `winamp.ini` / `.q1` / `.q2` & Reset tucked under `Winamp Migration & Data`.
+   - **Shared `DroidAmpFileSniffer` & "Inform + Allow Overriding" Recovery**: Cross-format wrong-slot redirect dialogs across M5 & M6, plus explicit user notice + override actions for partial skins, contrast guard, safe-boot fallback, revoked folders, denied permissions, stale cached tracks, and partial `.ini`/`.q1`/`.q2` imports.
+   - **About DroidAmp**: Version, GPL-3.0-or-later, "100% Offline · Zero Network Permissions" badge, Open-Source Credits, and clickable GitHub repo link.
+   - *Deferred Post-M6*: Collapsible Settings Search (`🔍` if settings exceed ~25 items) and Self-Hosted Streaming (`Navidrome`/`OpenSubsonic`/`Jellyfin` via pluggable `Music Source`, separate `net` flavor or v2 to preserve `ADR-013`).
 7. **Milestone 7 — Hardening, Release & F-Droid Submission** *(Planned — see [FDROID.md](FDROID.md))*:
    - Resolve Tier 5 crossfade/error edge cases (`G-1`..`G-6` in [RETROSPECTIVE_M2_M4.md](RETROSPECTIVE_M2_M4.md)) and update Android instrumented E2E suites for the final v2 UI.
    - Cut tagged release on `release` (including `LICENSE`, `dependenciesInfo = false`, updated `README.md` & `fastlane/` screenshots, and optional `512×512` `fastlane/metadata/android/en-US/images/icon.png`).

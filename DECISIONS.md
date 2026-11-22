@@ -228,3 +228,33 @@ This log records the key product, UX, and engineering decisions made during the 
   - Merge feature branches into `master` only when tests pass; enforce unit tests, APK build, and zero-forbidden-permissions audit automatically via `.github/workflows/ci.yml`.
   - Cut releases on `release`: merge `master` → `release`, bump version in `app/build.gradle.kts`, update `README.md` screenshots locally via AGY whenever UI screens changed, tag `vX.Y.Z[-alpha.N]`, and push — `.github/workflows/release.yml` builds, audits, and publishes the GitHub Release + APK automatically.
 - **Rationale**: Gives clean mechanical CI/CD guardrails in GitHub Actions without paying the slow/flaky cost of KVM-less Android emulators in CI, while letting AGY handle fast local visual screenshot refreshes and feature-branch hygiene.
+
+## ADR-028: Augmented `.wsz` Skin Format, Smart Legacy Fallback & Dual-State Drawer Header
+- **Date**: 2026-11-22
+- **Status**: Accepted *(Resolves Milestone 5 product direction)*
+- **Decision**:
+  - **Single `.wsz` Container**: Keep `.wsz` as the universal archive extension; augmented DroidAmp-native skins are standard `.wsz` zips containing optional `droidamp.json` palette/shape metadata and alpha-channel PNG sprite overrides.
+  - **Legacy `.wsz` Smart Default**: Unmodified 1999 `.wsz` files (no `droidamp.json`) render extracted OG colors + crisp vector hardware chrome by default (eliminating opaque 24-bit BMP rectangular seams), with an optional **"Classic BMP Sprites"** toggle for users who want raw legacy bitmaps.
+  - **Optional Full Mobile Sprite Coverage**: Augmented `.wsz` skins *may* supply alpha-PNG sprites for every mobile control (`QUEUE`, `LIBRARY`, `REM`, `MISC`, `LIST`, inline `[▶]`/`[+]`, dialogs), cleanly falling back to `droidamp.json` tokens/shape styles when omitted.
+  - **All-or-None Header Consistency + 2 Drawer States**: All 3 panel titlebars (`Main Deck`, `Equalizer`, `Queue/Library`) use consistent themed styling together (or all vector), and the `Queue/Library` header supports **2 distinct sprite/state slots** (collapsed vs. expanded).
+  - **Out-of-the-Box Showcase & Converter**: Ship 1–2 tailor-made built-in Augmented `.wsz` skins alongside `DroidAmp Classic`, plus a Python CLI converter in `tools/` to upgrade legacy `.wsz` archives.
+- **Rationale**: Combines 100% Winamp archive interoperability with truly native, seam-free mobile UI craft across every screen in DroidAmp.
+
+## ADR-029: Milestone 6 Senior UX Specification — Settings IA, On-Deck EQ Presets, Dual Entry A/B & Graceful Recovery
+- **Date**: 2026-11-22
+- **Status**: Accepted *(Resolves Milestone 6 UX & M5/M6 unhappy-path recovery)*
+- **Decision**:
+  - **Primary Archetype & Visual Metaphor**: Optimize Settings top-to-bottom for **First-Week Tuners** (`Phone & Controls` → `Music Library` → `Appearance (Skins)` → `Audio & Playback` → `Winamp Migration & Data` → `About DroidAmp`), rendered as a **Skin-Aware Beveled Rack Preferences** UI with **`[OG]` micro-badges** next to classic 1999 Winamp options.
+  - **Dual Entry Point A/B Prototype**: Implement both **Mode A** (Top-right Titlebar `⚙` → full-screen beveled Preferences) and **Mode B** (always-accessible square `⚙` next to `[QUEUE] | [LIBRARY]` → expands drawer + one-way lateral pan into a gated Settings pane, swipe-back only), switchable via a temporary dev toggle in `About` for physical-device testing.
+  - **On-Deck OG Winamp EQ `PRESETS` Menu**: Keep single-preset EQ curation (Load, Save, Auto-Load per track/folder, Import `.eqf`, Export `.eqf`, Delete) directly on the EQ deck's `PRESETS` button; keep bulk `winamp.ini` / `winamp.q1` / `winamp.q2` & Reset nested under `Settings → Winamp Migration & Data`.
+  - **Nested 2-Column Skin Browser**: Place Skins in a dedicated `Settings → Skins` 2-wide visual preview grid with `+ Import .wsz`, delete on imported skins, Legacy `.wsz` Vector vs. Classic BMP toggle, and Auto-Contrast Guard override. (Keep the Python `.wsz` converter in `tools/wsz-augment/`, excluded from APK builds.)
+  - **Clean Controls & Zero Engine Jargon**:
+    - Rename SAF/MediaStore to **Music Source** (`All Device Music` vs. `Selected Folders`), persisting SAF folder URIs across switches, backed by a lightweight local **metadata index cache** (no audio duplication).
+    - Model **Track Transition** as a 3-way radio (`Standard` / `Gapless` / `Crossfade`) with independently persisted `Crossfade Duration` (`1s–12s`).
+    - Default **Hardware Volume Keys** to `Sync with System Volume` (1:1 lockstep with `STREAM_MUSIC`), with `Independent Deck Volume [OG]` as an option.
+    - Lock `MainActivity` to **portrait orientation** (`android:screenOrientation="portrait"`).
+  - **Shared `DroidAmpFileSniffer` & "Inform + Allow Overriding" Recovery (M5 + M6)**:
+    - Sniff magic bytes/headers across all importers (`.wsz`, `.eqf`, `.q1`/`.q2`, `winamp.ini`, `.m3u`/`.pls`) to offer 1-tap redirect dialogs when a user picks the wrong import slot.
+    - Never fail silently or remove user agency: inform and offer overrides for partial `.wsz` fallbacks, auto-contrast guard, safe-boot skin revert, revoked SAF folders (`Re-grant`/`Keep`/`Remove`), denied `READ_MEDIA_AUDIO`, stale cached tracks (`Remove`/`Keep`), and partial `.ini`/`.q1`/`.q2` imports.
+  - **About & Deferred Items**: Include GPL-3.0-or-later notice, offline badge, Open-Source Credits, and clickable GitHub repo link in `About DroidAmp`. Document — but defer past M6 — collapsible Settings Search (`🔍`) and Self-Hosted Streaming (pluggable `Music Source`, separate `net` flavor or v2 to keep `ADR-013` strictly offline).
+- **Rationale**: Keeps casual setup effortless, restores authentic on-deck Winamp EQ ergonomics, eliminates conflict states and dead-end errors across both M5 and M6, and lets us validate the novel drawer-pan Settings entry point against a classic titlebar gear on real hardware.
