@@ -180,6 +180,7 @@ class AndroidSkinRepository internal constructor(
     val displayName: String,
     val author: String,
     val origin: SkinOrigin,
+    val previewPalette: SkinMiniPreviewPalette = SkinMiniPreviewPalette.DEFAULT,
   )
 
   private val decodedCache = ConcurrentHashMap<String, DroidAmpSkin>()
@@ -313,77 +314,106 @@ class AndroidSkinRepository internal constructor(
           return@withContext Result.success(null)
         }
 
-        when (val detected = DroidAmpFileSniffer.sniff(rawBytes, rawFileName)) {
-          DetectedWinampFormat.EqfSinglePreset,
-          DetectedWinampFormat.EqLibraryQ1,
-          DetectedWinampFormat.AutoEqQ2,
-          DetectedWinampFormat.WinampIni,
-          DetectedWinampFormat.PlaylistM3u,
-          DetectedWinampFormat.PlaylistPls,
-          -> {
-            _recoveryNotice.value =
-              SkinRecoveryNotice.WrongSlotFileDetected(
-                uriString = uriString,
-                fileName = rawFileName,
-                detectedFormat = detected,
-                rawBytes = rawBytes,
-              )
-            Result.success(null)
-          }
-
-          is DetectedWinampFormat.Unsupported -> {
-            _recoveryNotice.value =
-              SkinRecoveryNotice.InvalidSkinError(
-                fileName = rawFileName,
-                reason = detected.reason,
-              )
-            Result.success(null)
-          }
-
-          is DetectedWinampFormat.WszSkin -> {
-            val parsedArchive = WszArchiveParser.parse(rawBytes)
-            if (parsedArchive.entries.isEmpty() &&
-              parsedArchive.manifestJson() == null &&
-              parsedArchive.sprites.isEmpty()
-            ) {
-              _recoveryNotice.value =
-                SkinRecoveryNotice.InvalidSkinError(
-                  fileName = rawFileName,
-                  reason = "ZIP archive contains no safe .wsz skin assets.",
-                )
-              return@withContext Result.success(null)
-            }
-
-            val cleanBase = sanitizeBaseFileName(rawFileName)
-            val proposedFileName = "$cleanBase.wsz"
-            val existingStored =
-              storageGateway.listImportedSkins().firstOrNull {
-                it.fileName.equals(proposedFileName, ignoreCase = true)
-              }
-
-            if (existingStored != null) {
-              val existingId = "$IMPORTED_PREFIX${existingStored.fileName}"
-              val existingEntry =
-                _availableSkins.value.firstOrNull { it.id == existingId }
-                  ?: buildImportedEntry(existingStored)
-              _recoveryNotice.value =
-                SkinRecoveryNotice.DuplicateSkinConflict(
-                  uriString = uriString,
-                  existingEntry = existingEntry,
-                  proposedFileName = existingStored.fileName,
-                  rawBytes = rawBytes,
-                )
-              return@withContext Result.success(null)
-            }
-
-            val entry = commitImportedSkinBytes(fileName = proposedFileName, rawBytes = rawBytes)
-            Result.success(entry)
-          }
-        }
+        processImportedBytes(
+          uriString = uriString,
+          rawFileName = rawFileName,
+          rawBytes = rawBytes,
+        )
       } catch (ce: CancellationException) {
         throw ce
       } catch (t: Throwable) {
         Result.failure(t)
+      }
+    }
+
+  override suspend fun importSkinFromBytes(
+    fileName: String,
+    rawBytes: ByteArray,
+  ): Result<SkinEntry?> =
+    withContext(ioDispatcher) {
+      try {
+        processImportedBytes(
+          uriString = "",
+          rawFileName = fileName.ifBlank { "imported_skin.wsz" },
+          rawBytes = rawBytes,
+        )
+      } catch (ce: CancellationException) {
+        throw ce
+      } catch (t: Throwable) {
+        Result.failure(t)
+      }
+    }
+
+  private suspend fun processImportedBytes(
+    uriString: String,
+    rawFileName: String,
+    rawBytes: ByteArray,
+  ): Result<SkinEntry?> =
+    when (val detected = DroidAmpFileSniffer.sniff(rawBytes, rawFileName)) {
+      DetectedWinampFormat.EqfSinglePreset,
+      DetectedWinampFormat.EqLibraryQ1,
+      DetectedWinampFormat.AutoEqQ2,
+      DetectedWinampFormat.WinampIni,
+      DetectedWinampFormat.PlaylistM3u,
+      DetectedWinampFormat.PlaylistPls,
+      -> {
+        _recoveryNotice.value =
+          SkinRecoveryNotice.WrongSlotFileDetected(
+            uriString = uriString,
+            fileName = rawFileName,
+            detectedFormat = detected,
+            rawBytes = rawBytes,
+          )
+        Result.success(null)
+      }
+
+      is DetectedWinampFormat.Unsupported -> {
+        _recoveryNotice.value =
+          SkinRecoveryNotice.InvalidSkinError(
+            fileName = rawFileName,
+            reason = detected.reason,
+          )
+        Result.success(null)
+      }
+
+      is DetectedWinampFormat.WszSkin -> {
+        val parsedArchive = WszArchiveParser.parse(rawBytes)
+        if (parsedArchive.entries.isEmpty() &&
+          parsedArchive.manifestJson() == null &&
+          parsedArchive.sprites.isEmpty()
+        ) {
+          _recoveryNotice.value =
+            SkinRecoveryNotice.InvalidSkinError(
+              fileName = rawFileName,
+              reason = "ZIP archive contains no safe .wsz skin assets.",
+            )
+          return Result.success(null)
+        }
+
+        val cleanBase = sanitizeBaseFileName(rawFileName)
+        val proposedFileName = "$cleanBase.wsz"
+        val existingStored =
+          storageGateway.listImportedSkins().firstOrNull {
+            it.fileName.equals(proposedFileName, ignoreCase = true)
+          }
+
+        if (existingStored != null) {
+          val existingId = "$IMPORTED_PREFIX${existingStored.fileName}"
+          val existingEntry =
+            _availableSkins.value.firstOrNull { it.id == existingId }
+              ?: buildImportedEntry(existingStored)
+          _recoveryNotice.value =
+            SkinRecoveryNotice.DuplicateSkinConflict(
+              uriString = uriString,
+              existingEntry = existingEntry,
+              proposedFileName = existingStored.fileName,
+              rawBytes = rawBytes,
+            )
+          return Result.success(null)
+        }
+
+        val entry = commitImportedSkinBytes(fileName = proposedFileName, rawBytes = rawBytes)
+        Result.success(entry)
       }
     }
 
@@ -615,6 +645,15 @@ class AndroidSkinRepository internal constructor(
         displayName = decoded.displayName,
         author = decoded.author,
         origin = decoded.origin,
+        previewPalette =
+          SkinMiniPreviewPalette(
+            panelBg = decoded.chassis.panelSurface,
+            titleBarStart = decoded.chassis.titleBarActiveStart,
+            titleBarEnd = decoded.chassis.titleBarActiveEnd,
+            vfdBg = decoded.vfd.wellBackground,
+            vfdPhosphor = decoded.vfd.phosphorPrimary,
+            accent = decoded.vfd.ledAmber,
+          ),
       )
 
     val refreshed = scanSkins(lastLinkedRoots)
@@ -635,6 +674,7 @@ class AndroidSkinRepository internal constructor(
         origin = decoded.origin,
         uriOrPath = stored.pathOrUri,
         author = decoded.author,
+        previewPalette = metadataCache[id]?.previewPalette ?: SkinMiniPreviewPalette.DEFAULT,
       )
   }
 
@@ -771,6 +811,7 @@ class AndroidSkinRepository internal constructor(
             origin = meta.origin,
             uriOrPath = "assets://skins/$assetName",
             author = meta.author,
+            previewPalette = meta.previewPalette,
           ),
         )
       }
@@ -801,6 +842,7 @@ class AndroidSkinRepository internal constructor(
                 origin = meta.origin,
                 uriOrPath = safSkin.pathOrUri,
                 author = meta.author,
+                previewPalette = meta.previewPalette,
               ),
             )
           }
@@ -826,6 +868,7 @@ class AndroidSkinRepository internal constructor(
       origin = meta.origin,
       uriOrPath = stored.pathOrUri,
       author = meta.author,
+      previewPalette = meta.previewPalette,
     )
   }
 
@@ -838,12 +881,16 @@ class AndroidSkinRepository internal constructor(
     if (bytes == null || !WszArchiveParser.hasZipMagic(bytes)) {
       return CachedHeaderMeta(displayName = fallbackName, author = "DroidAmp", origin = defaultOrigin)
     }
-    val manifestJson = runCatching { WszArchiveParser.parse(bytes).manifestJson() }.getOrNull()
+    val archive = runCatching { WszArchiveParser.parse(bytes) }.getOrNull()
+      ?: return CachedHeaderMeta(displayName = fallbackName, author = "DroidAmp", origin = defaultOrigin)
+    val preview = runCatching { loader.extractPreviewPalette(archive) }.getOrDefault(SkinMiniPreviewPalette.DEFAULT)
+    val manifestJson = archive.manifestJson()
     if (manifestJson == null) {
       return CachedHeaderMeta(
         displayName = fallbackName,
         author = "DroidAmp",
         origin = SkinOrigin.LEGACY_WSZ,
+        previewPalette = preview,
       )
     }
     val manifest = DroidAmpSkinManifestParser.parse(manifestJson)
@@ -851,6 +898,7 @@ class AndroidSkinRepository internal constructor(
       displayName = manifest.name ?: fallbackName,
       author = manifest.author ?: "DroidAmp",
       origin = SkinOrigin.AUGMENTED_WSZ,
+      previewPalette = preview,
     )
   }
 

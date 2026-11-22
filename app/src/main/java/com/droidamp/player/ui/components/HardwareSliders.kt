@@ -37,6 +37,7 @@ fun HorizontalHardwareSlider(
   onValueChange: (Float) -> Unit,
   modifier: Modifier = Modifier,
   onDragFinished: () -> Unit = {},
+  onDoubleTap: (() -> Unit)? = null,
   trackStyle: SliderTrackStyle = SliderTrackStyle.SEEKBAR,
   height: Dp = 24.dp,
   thumbWidth: Dp = 18.dp,
@@ -44,6 +45,7 @@ fun HorizontalHardwareSlider(
   val skin = LocalDroidAmpSkin.current
   val latestOnChange by rememberUpdatedState(onValueChange)
   val latestOnFinished by rememberUpdatedState(onDragFinished)
+  val latestOnDoubleTap by rememberUpdatedState(onDoubleTap)
 
   Canvas(
     modifier =
@@ -51,10 +53,27 @@ fun HorizontalHardwareSlider(
         .fillMaxWidth()
         .height(height)
         .pointerInput(Unit) {
+          var lastTapTimeMs = 0L
+          var lastTapX = Float.NaN
           detectTapGestures { offset ->
-            val norm = (offset.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
-            latestOnChange(norm)
-            latestOnFinished()
+            val now = System.currentTimeMillis()
+            val doubleTapSlopPx = viewConfiguration.touchSlop * 2f
+            if (
+              latestOnDoubleTap != null &&
+              now - lastTapTimeMs <= viewConfiguration.doubleTapTimeoutMillis &&
+              !lastTapX.isNaN() &&
+              abs(offset.x - lastTapX) <= doubleTapSlopPx
+            ) {
+              lastTapTimeMs = 0L
+              lastTapX = Float.NaN
+              latestOnDoubleTap?.invoke()
+            } else {
+              lastTapTimeMs = now
+              lastTapX = offset.x
+              val norm = (offset.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
+              latestOnChange(norm)
+              latestOnFinished()
+            }
           }
         }
         .pointerInput(Unit) {

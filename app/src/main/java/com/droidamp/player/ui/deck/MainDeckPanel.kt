@@ -11,10 +11,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -40,11 +43,13 @@ import com.droidamp.player.ui.components.HardwareText
 import com.droidamp.player.ui.components.HorizontalHardwareSlider
 import com.droidamp.player.ui.components.RecessedWell
 import com.droidamp.player.ui.components.ScrollingMarqueeText
+import com.droidamp.player.ui.components.SettingsGearButton
 import com.droidamp.player.ui.components.SevenSegmentClock
 import com.droidamp.player.ui.components.SliderTrackStyle
 import com.droidamp.player.ui.components.VfdStatusGlyph
 import com.droidamp.player.ui.components.VfdVisualizerCanvas
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 @Composable
 fun MainDeckPanel(
@@ -120,6 +125,17 @@ fun MainDeckPanel(
   var transientMarqueeOverride by remember { mutableStateOf<String?>(null) }
   var isDraggingSeek by remember { mutableStateOf(false) }
   var seekPreviewNorm by remember { mutableStateOf(0f) }
+  var balanceResetPulse by remember { mutableIntStateOf(0) }
+
+  LaunchedEffect(balanceResetPulse) {
+    if (balanceResetPulse > 0) {
+      transientMarqueeOverride = "BALANCE: CENTER"
+      delay(700L)
+      if (transientMarqueeOverride == "BALANCE: CENTER") {
+        transientMarqueeOverride = null
+      }
+    }
+  }
 
   val track = playbackState.currentTrack
   val defaultMarquee =
@@ -127,7 +143,7 @@ fun MainDeckPanel(
       val idx = (playbackState.currentIndex + 1).coerceAtLeast(1)
       "$idx. ${track.displayLabel} (${formatWinampDuration(track.durationMs)})  ***  "
     } else {
-      "DROIDAMP v0.1.0-alpha.1  —  NO TRACK LOADED  ***  "
+      "DROIDAMP  —  NO TRACK LOADED  ***  "
     }
 
   val durationMs = playbackState.durationMs.coerceAtLeast(1L)
@@ -295,7 +311,7 @@ fun MainDeckPanel(
               value = playbackState.volume / PlaybackState.MAX_VOLUME.toFloat(),
               onValueChange = { norm ->
                 val vol = (norm * PlaybackState.MAX_VOLUME).roundToInt().coerceIn(0, 255)
-                transientMarqueeOverride = "VOLUME: ${((vol / 255f) * 100f).roundToInt()}% ($vol/255)"
+                transientMarqueeOverride = "VOLUME: ${((vol / 255f) * 100f).roundToInt()}%"
                 onVolumeChange(vol)
               },
               onDragFinished = { transientMarqueeOverride = null },
@@ -333,6 +349,10 @@ fun MainDeckPanel(
                 onBalanceChange(snapped)
               },
               onDragFinished = { transientMarqueeOverride = null },
+              onDoubleTap = {
+                onBalanceChange(0)
+                balanceResetPulse++
+              },
               trackStyle = SliderTrackStyle.CENTER_BALANCE,
               height = sliderHeight,
               thumbWidth = 14.dp,
@@ -407,7 +427,7 @@ fun MainDeckPanel(
           )
           BeveledIconButton(
             icon = TransportIconType.EJECT,
-            contentDescription = "Open Library",
+            contentDescription = "Open library",
             onClick = onEject,
             glyphSize = 15.dp,
             modifier = Modifier.weight(1f).height(transportHeight),

@@ -294,12 +294,13 @@ fun ChassisTitleBar(
   modifier: Modifier = Modifier,
   showDragGrip: Boolean = false,
   customSprite: ImageBitmap? = null,
+  leadingContent: @Composable (() -> Unit)? = null,
   trailingContent: @Composable (() -> Unit)? = null,
 ) {
   val skin = LocalDroidAmpSkin.current
   if (customSprite != null) {
     // Render custom `.wsz` / Augmented header sprite directly with nearest-neighbor crispness
-    // while keeping gesture modifiers (e.g. 1:1 drawer pan + tap) and optional trailingContent live!
+    // while keeping gesture modifiers (e.g. 1:1 drawer pan + tap) and optional leading/trailing content live!
     Box(
       modifier =
         modifier
@@ -314,6 +315,16 @@ fun ChassisTitleBar(
           dstSize = IntSize(size.width.toInt().coerceAtLeast(1), size.height.toInt().coerceAtLeast(1)),
           filterQuality = FilterQuality.None,
         )
+      }
+      if (leadingContent != null) {
+        Box(
+          modifier =
+            Modifier
+              .align(Alignment.CenterStart)
+              .padding(start = 4.dp),
+        ) {
+          leadingContent()
+        }
       }
       if (trailingContent != null) {
         Box(
@@ -343,6 +354,9 @@ fun ChassisTitleBar(
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(6.dp),
   ) {
+    if (leadingContent != null) {
+      leadingContent()
+    }
     TitleBarStripes(skin = skin, modifier = Modifier.weight(1f))
     if (showDragGrip) {
       Box(
@@ -540,6 +554,8 @@ fun BeveledLedToggleButton(
   compact: Boolean = false,
   spriteOff: ImageBitmap? = null,
   spriteOn: ImageBitmap? = null,
+  enabled: Boolean = true,
+  trailingContent: (@Composable () -> Unit)? = null,
 ) {
   val skin = LocalDroidAmpSkin.current
   val interactionSource = remember { MutableInteractionSource() }
@@ -552,6 +568,7 @@ fun BeveledLedToggleButton(
         modifier
           .semantics { this.contentDescription = label }
           .clickable(
+            enabled = enabled,
             role = Role.Switch,
             interactionSource = interactionSource,
             indication = null,
@@ -572,6 +589,7 @@ fun BeveledLedToggleButton(
         .skinClippedBackground(skin, if (isPressed || checked) skin.bevel.buttonFacePressed else skin.bevel.buttonFace)
         .raisedBevel(skin, pressed = isPressed)
         .clickable(
+          enabled = enabled,
           interactionSource = interactionSource,
           indication = null,
           onClick = onClick,
@@ -592,9 +610,18 @@ fun BeveledLedToggleButton(
     Text(
       text = label,
       style = if (compact) skin.typography.microLabel else skin.typography.buttonLabel,
-      color = if (checked) skin.bevel.buttonTextActive else skin.bevel.buttonText,
+      color =
+        when {
+          !enabled -> skin.chassis.labelMuted
+          checked -> skin.bevel.buttonTextActive
+          else -> skin.bevel.buttonText
+        },
       maxLines = 1,
     )
+    if (trailingContent != null) {
+      Spacer(Modifier.width(4.dp))
+      trailingContent()
+    }
   }
 }
 
@@ -695,4 +722,68 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawAspectFitSprite
     dstSize = IntSize(dstW, dstH),
     filterQuality = FilterQuality.None,
   )
+}
+
+/**
+ * Skin-aware square beveled Settings gear button (`mobile_settings_gear_*.png` or carved vector glyph).
+ */
+@Composable
+fun SettingsGearButton(
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier,
+  highlighted: Boolean = false,
+  glyphSize: Dp = 13.dp,
+  contentDescription: String = "Settings",
+) {
+  val skin = LocalDroidAmpSkin.current
+  val interactionSource = remember { MutableInteractionSource() }
+  val isPressed by interactionSource.collectIsPressedAsState()
+  val spriteNormal = skin.sprites.mobileSettingsGearNormal
+  val spritePressed = skin.sprites.mobileSettingsGearPressed
+
+  if (spriteNormal != null) {
+    val activeSprite = if (isPressed && spritePressed != null) spritePressed else spriteNormal
+    Box(
+      modifier =
+        modifier
+          .semantics { this.contentDescription = contentDescription }
+          .clickable(
+            role = Role.Button,
+            interactionSource = interactionSource,
+            indication = null,
+            onClick = onClick,
+          ),
+      contentAlignment = Alignment.Center,
+    ) {
+      Canvas(modifier = Modifier.fillMaxSize()) {
+        drawAspectFitSprite(activeSprite)
+      }
+    }
+    return
+  }
+
+  Box(
+    modifier =
+      modifier
+        .skinClippedBackground(
+          skin,
+          if (isPressed || highlighted) skin.bevel.buttonFacePressed else skin.bevel.buttonFace,
+        )
+        .raisedBevel(skin, pressed = isPressed)
+        .semantics { this.contentDescription = contentDescription }
+        .clickable(
+          role = Role.Button,
+          interactionSource = interactionSource,
+          indication = null,
+          onClick = onClick,
+        ),
+    contentAlignment = Alignment.Center,
+  ) {
+    val shift = if (isPressed) 1.dp else 0.dp
+    GearHardwareGlyph(
+      tint = if (highlighted) skin.bevel.buttonTextActive else skin.bevel.buttonText,
+      glyphSize = glyphSize,
+      modifier = Modifier.offset(x = shift, y = shift),
+    )
+  }
 }

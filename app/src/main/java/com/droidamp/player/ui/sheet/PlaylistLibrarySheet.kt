@@ -1,12 +1,18 @@
 package com.droidamp.player.ui.sheet
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,10 +21,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,6 +40,8 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.hideFromAccessibility
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import com.droidamp.player.domain.model.AudioTrack
@@ -42,12 +53,11 @@ import com.droidamp.player.domain.model.PlaylistSortOrder
 import com.droidamp.player.domain.model.SavedPlaylistEntry
 import com.droidamp.player.domain.model.SheetMode
 import com.droidamp.player.skin.LocalDroidAmpSkin
-import com.droidamp.player.skin.SkinEntry
-import com.droidamp.player.skin.SkinRenderMode
-import com.droidamp.player.skin.SkinSettingsState
+import com.droidamp.player.storage.QueueTapAction
 import com.droidamp.player.ui.components.BeveledLedToggleButton
 import com.droidamp.player.ui.components.ChassisTitleBar
 import com.droidamp.player.ui.components.HardwarePanel
+import com.droidamp.player.ui.components.SettingsGearButton
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -72,8 +82,6 @@ fun UnifiedQueueLibraryPanel(
   libraryViewLevel: LibraryViewLevel,
   folderContents: FolderContents,
   playlists: List<SavedPlaylistEntry>,
-  availableSkins: List<SkinEntry>,
-  activeSkinId: String,
   selectedLibraryTrackIds: Set<String>,
   selectedPlaylistId: String?,
   libraryFeedbackBanner: String?,
@@ -107,9 +115,6 @@ fun UnifiedQueueLibraryPanel(
   onOpenLibraryRoot: () -> Unit,
   onOpenLibraryFolders: () -> Unit,
   onOpenLibraryPlaylists: () -> Unit,
-  onOpenLibrarySkins: () -> Unit,
-  onSelectSkin: (String) -> Unit,
-  onImportSkinClick: () -> Unit,
   onNavigateUp: () -> Unit,
   onOpenFolder: (FolderEntry) -> Unit,
   onPlayFolder: (FolderEntry) -> Unit,
@@ -132,10 +137,13 @@ fun UnifiedQueueLibraryPanel(
   onNext: () -> Unit,
   modifier: Modifier = Modifier,
   onMoveTrack: (fromIndex: Int, toIndex: Int) -> Unit = { _, _ -> },
-  skinSettings: SkinSettingsState = SkinSettingsState(),
-  onSetLegacyRenderMode: (SkinRenderMode) -> Unit = {},
-  onSetAutoContrastGuard: (Boolean) -> Unit = {},
-  onDeleteImportedSkin: (SkinEntry) -> Unit = {},
+  onMoveTracksStep: (anchorIndex: Int, delta: Int) -> Boolean = { _, _ -> false },
+  queueTapAction: QueueTapAction = QueueTapAction.DOUBLE_TAP,
+  hapticFeedbackEnabled: Boolean = true,
+  isSettingsOpen: Boolean = false,
+  isExitingSettingsArmed: Boolean = false,
+  onOpenSettings: () -> Unit = {},
+  settingsContent: @Composable () -> Unit = {},
 ) {
   val skin = LocalDroidAmpSkin.current
   val scope = rememberCoroutineScope()
@@ -144,6 +152,16 @@ fun UnifiedQueueLibraryPanel(
       initialPage = if (sheetMode == SheetMode.PLAYLIST) 0 else 1,
       pageCount = { 2 },
     )
+  val activePagerTab by remember(pagerState) {
+    derivedStateOf {
+      val continuousPage = pagerState.currentPage + pagerState.currentPageOffsetFraction
+      if (pagerState.settledPage == 0) {
+        if (continuousPage >= 0.22f) 1 else 0
+      } else {
+        if (continuousPage <= 0.78f) 0 else 1
+      }
+    }
+  }
 
   LaunchedEffect(sheetMode) {
     val targetPage = if (sheetMode == SheetMode.PLAYLIST) 0 else 1
@@ -151,10 +169,11 @@ fun UnifiedQueueLibraryPanel(
       pagerState.animateScrollToPage(targetPage)
     }
   }
+
   LaunchedEffect(pagerState.settledPage) {
-    val settledMode = if (pagerState.settledPage == 0) SheetMode.PLAYLIST else SheetMode.LIBRARY
-    if (settledMode != sheetMode) {
-      onSwitchSheetMode(settledMode)
+    when (pagerState.settledPage) {
+      0 -> if (sheetMode != SheetMode.PLAYLIST) onSwitchSheetMode(SheetMode.PLAYLIST)
+      1 -> if (sheetMode != SheetMode.LIBRARY) onSwitchSheetMode(SheetMode.LIBRARY)
     }
   }
 
@@ -180,8 +199,9 @@ fun UnifiedQueueLibraryPanel(
   val latestOnDragFinished by rememberUpdatedState(onDragFinished)
   val latestCanPullDownToCollapse by rememberUpdatedState(canPullDownToCollapse)
   val latestIsMidPan by rememberUpdatedState(isMidPan)
+  val latestIsExpanded by rememberUpdatedState(isExpanded)
 
-  // Pull-down at scroll-top + mid-pan direction-reversal lock (ADR-024)
+  // Effortless expand-on-drag-up + pull-down at scroll-top + mid-pan direction-reversal lock
   val pullDownNestedScroll =
     remember {
       var dragAccum = 0f
@@ -191,13 +211,13 @@ fun UnifiedQueueLibraryPanel(
           available: Offset,
           source: NestedScrollSource,
         ): Offset {
-          // If the stereo tower is mid-pan, keep BOTH up & down deltas locked to the pan
-          // so reversing direction mid-gesture never freezes the tower or scrolls the inner list.
-          if (source == NestedScrollSource.UserInput && latestIsMidPan() && available.y != 0f) {
-            activeNestedPan = true
-            dragAccum += available.y
-            latestOnDragDelta(available.y)
-            return Offset(0f, available.y)
+          if (source == NestedScrollSource.UserInput && available.y != 0f) {
+            if (latestIsMidPan() || (!latestIsExpanded && available.y < 0f)) {
+              activeNestedPan = true
+              dragAccum += available.y
+              latestOnDragDelta(available.y)
+              return Offset(0f, available.y)
+            }
           }
           return Offset.Zero
         }
@@ -207,11 +227,15 @@ fun UnifiedQueueLibraryPanel(
           available: Offset,
           source: NestedScrollSource,
         ): Offset {
-          if (source == NestedScrollSource.UserInput && available.y > 0f && latestCanPullDownToCollapse()) {
-            activeNestedPan = true
-            dragAccum += available.y
-            latestOnDragDelta(available.y)
-            return Offset(0f, available.y)
+          if (source == NestedScrollSource.UserInput) {
+            if ((available.y > 0f && latestCanPullDownToCollapse()) ||
+              (available.y < 0f && !latestIsExpanded)
+            ) {
+              activeNestedPan = true
+              dragAccum += available.y
+              latestOnDragDelta(available.y)
+              return Offset(0f, available.y)
+            }
           }
           return Offset.Zero
         }
@@ -236,10 +260,11 @@ fun UnifiedQueueLibraryPanel(
       // Draggable & tappable stereo-tower handle titlebar (never unmounted during drag!)
       val arrow = if (isExpanded) "▼" else "▲"
       val title =
-        if (sheetMode == SheetMode.PLAYLIST) {
-          "DROIDAMP QUEUE (${playbackState.queue.size}) $arrow"
-        } else {
-          "DROIDAMP LIBRARY $arrow"
+        when {
+          isSettingsOpen && isExitingSettingsArmed -> "RELEASE TO EXIT SETTINGS $arrow"
+          isSettingsOpen -> "DROIDAMP SETTINGS $arrow"
+          activePagerTab == 0 -> "DROIDAMP QUEUE (${playbackState.queue.size}) $arrow"
+          else -> "DROIDAMP LIBRARY $arrow"
         }
       val drawerHeaderSprite =
         if (isExpanded) {
@@ -275,96 +300,137 @@ fun UnifiedQueueLibraryPanel(
             .padding(skin.metrics.panelPadding),
         verticalArrangement = Arrangement.spacedBy(5.dp),
       ) {
-        // Always-live, always-scrollable HorizontalPager: Page 0 = QUEUE, Page 1 = LIBRARY
-        HorizontalPager(
-          state = pagerState,
-          modifier = Modifier.weight(1f).fillMaxWidth(),
-        ) { page ->
-          when (page) {
-            0 -> {
-              if (!hasLinkedRoots && playbackState.queue.isEmpty()) {
-                EmptyFolderWell(
+        Box(
+          modifier =
+            Modifier
+              .weight(1f)
+              .fillMaxWidth()
+              .pointerInput(Unit) {
+                var totalDrag = 0f
+                detectVerticalDragGestures(
+                  onDragStart = { totalDrag = 0f },
+                  onDragEnd = { latestOnDragFinished(totalDrag) },
+                  onDragCancel = { latestOnDragFinished(totalDrag) },
+                ) { _, dragAmount ->
+                  totalDrag += dragAmount
+                  latestOnDragDelta(dragAmount)
+                }
+              },
+        ) {
+          // Always-live, always-scrollable HorizontalPager: Page 0 = QUEUE, Page 1 = LIBRARY
+          HorizontalPager(
+            state = pagerState,
+            userScrollEnabled = !isSettingsOpen,
+            flingBehavior = PagerDefaults.flingBehavior(state = pagerState, snapPositionalThreshold = 0.22f),
+            modifier =
+              Modifier
+                .fillMaxSize()
+                .then(if (isSettingsOpen) Modifier.semantics { hideFromAccessibility() } else Modifier),
+          ) { page ->
+            when (page) {
+              0 -> {
+                if (!hasLinkedRoots && playbackState.queue.isEmpty()) {
+                  EmptyFolderWell(
+                    onSelectMusicFolder = onSelectMusicFolder,
+                    compactPeek = !isExpanded,
+                  )
+                } else {
+                  PlaylistEditorView(
+                    queue = playbackState.queue,
+                    currentIndex = playbackState.currentIndex,
+                    selectedIndices = selectedPlaylistIndices,
+                    showJumpFilter = showJumpFilter,
+                    jumpFilterQuery = jumpFilterQuery,
+                    activeMicroMenu = activeMicroMenu,
+                    showClearQueueConfirm = showClearQueueConfirm,
+                    showBottomActionBar = isExpanded,
+                    onTrackClick = onPlaylistTrackClick,
+                    onTrackDoubleClick = onPlaylistTrackDoubleClick,
+                    onMoveTrackUp = onMoveTrackUp,
+                    onMoveTrackDown = onMoveTrackDown,
+                    onJumpFilterChange = onJumpFilterChange,
+                    onToggleJumpFilter = onToggleJumpFilter,
+                    onOpenMicroMenu = onOpenMicroMenu,
+                    onDismissMicroMenu = onDismissMicroMenu,
+                    onRemoveSelected = onRemoveSelected,
+                    onCropSelected = onCropSelected,
+                    onRequestClearQueue = onRequestClearQueue,
+                    onConfirmClearQueue = onConfirmClearQueue,
+                    onDismissClearQueueConfirm = onDismissClearQueueConfirm,
+                    onSortQueue = onSortQueue,
+                    onReverseQueue = onReverseQueue,
+                    onRandomizeQueue = onRandomizeQueue,
+                    onNewQueue = onNewQueue,
+                    onSavePlaylist = onSavePlaylist,
+                    onLoadPlaylist = onLoadPlaylist,
+                    queueTapAction = queueTapAction,
+                    hapticFeedbackEnabled = hapticFeedbackEnabled,
+                    onMoveTrack = onMoveTrack,
+                    onMoveTracksStep = onMoveTracksStep,
+                  )
+                }
+              }
+
+              else -> {
+                LibraryBrowserView(
+                  hasLinkedRoots = hasLinkedRoots,
+                  libraryViewLevel = libraryViewLevel,
+                  folderContents = folderContents,
+                  playlists = playlists,
+                  selectedTrackIds = selectedLibraryTrackIds,
+                  selectedPlaylistId = selectedPlaylistId,
+                  queueCountByTrackId = queueCountByTrackId,
+                  libraryFeedbackBanner = libraryFeedbackBanner,
                   onSelectMusicFolder = onSelectMusicFolder,
-                  compactPeek = !isExpanded,
-                )
-              } else {
-                PlaylistEditorView(
-                  queue = playbackState.queue,
-                  currentIndex = playbackState.currentIndex,
-                  selectedIndices = selectedPlaylistIndices,
-                  showJumpFilter = showJumpFilter,
-                  jumpFilterQuery = jumpFilterQuery,
-                  activeMicroMenu = activeMicroMenu,
-                  showClearQueueConfirm = showClearQueueConfirm,
-                  showBottomActionBar = isExpanded,
-                  onTrackClick = onPlaylistTrackClick,
-                  onTrackDoubleClick = onPlaylistTrackDoubleClick,
-                  onMoveTrackUp = onMoveTrackUp,
-                  onMoveTrackDown = onMoveTrackDown,
-                  onJumpFilterChange = onJumpFilterChange,
-                  onToggleJumpFilter = onToggleJumpFilter,
-                  onOpenMicroMenu = onOpenMicroMenu,
-                  onDismissMicroMenu = onDismissMicroMenu,
-                  onRemoveSelected = onRemoveSelected,
-                  onCropSelected = onCropSelected,
-                  onRequestClearQueue = onRequestClearQueue,
-                  onConfirmClearQueue = onConfirmClearQueue,
-                  onDismissClearQueueConfirm = onDismissClearQueueConfirm,
-                  onSortQueue = onSortQueue,
-                  onReverseQueue = onReverseQueue,
-                  onRandomizeQueue = onRandomizeQueue,
-                  onNewQueue = onNewQueue,
-                  onSavePlaylist = onSavePlaylist,
-                  onLoadPlaylist = onLoadPlaylist,
-                  onMoveTrack = onMoveTrack,
+                  onOpenLibraryRoot = onOpenLibraryRoot,
+                  onOpenLibraryFolders = onOpenLibraryFolders,
+                  onOpenLibraryPlaylists = onOpenLibraryPlaylists,
+                  onNavigateUp = onNavigateUp,
+                  onOpenFolder = onOpenFolder,
+                  onPlayFolder = onPlayFolder,
+                  onEnqueueFolder = onEnqueueFolder,
+                  onPlayCurrentFolder = onPlayCurrentFolder,
+                  onEnqueueCurrentFolder = onEnqueueCurrentFolder,
+                  onToggleTrackSelection = onToggleLibraryTrackSelection,
+                  onPlayTrack = onPlayLibraryTrack,
+                  onEnqueueTrack = onEnqueueLibraryTrack,
+                  onSelectPlaylist = onSelectLibraryPlaylist,
+                  onPlayPlaylist = onPlayLibraryPlaylist,
+                  onEnqueuePlaylist = onEnqueueLibraryPlaylist,
+                  onPlayPrimarySelection = onPlayPrimaryLibrarySelection,
+                  onEnqueuePrimarySelection = onEnqueuePrimaryLibrarySelection,
+                  onClearSelection = onClearLibrarySelection,
+                  hapticFeedbackEnabled = hapticFeedbackEnabled,
                 )
               }
             }
+          }
 
-            else -> {
-              LibraryBrowserView(
-                hasLinkedRoots = hasLinkedRoots,
-                libraryViewLevel = libraryViewLevel,
-                folderContents = folderContents,
-                playlists = playlists,
-                availableSkins = availableSkins,
-                activeSkinId = activeSkinId,
-                selectedTrackIds = selectedLibraryTrackIds,
-                selectedPlaylistId = selectedPlaylistId,
-                queueCountByTrackId = queueCountByTrackId,
-                libraryFeedbackBanner = libraryFeedbackBanner,
-                onSelectMusicFolder = onSelectMusicFolder,
-                onOpenLibraryRoot = onOpenLibraryRoot,
-                onOpenLibraryFolders = onOpenLibraryFolders,
-                onOpenLibraryPlaylists = onOpenLibraryPlaylists,
-                onOpenLibrarySkins = onOpenLibrarySkins,
-                onSelectSkin = onSelectSkin,
-                onImportSkinClick = onImportSkinClick,
-                onNavigateUp = onNavigateUp,
-                onOpenFolder = onOpenFolder,
-                onPlayFolder = onPlayFolder,
-                onEnqueueFolder = onEnqueueFolder,
-                onPlayCurrentFolder = onPlayCurrentFolder,
-                onEnqueueCurrentFolder = onEnqueueCurrentFolder,
-                onToggleTrackSelection = onToggleLibraryTrackSelection,
-                onPlayTrack = onPlayLibraryTrack,
-                onEnqueueTrack = onEnqueueLibraryTrack,
-                onSelectPlaylist = onSelectLibraryPlaylist,
-                onPlayPlaylist = onPlayLibraryPlaylist,
-                onEnqueuePlaylist = onEnqueueLibraryPlaylist,
-                onPlayPrimarySelection = onPlayPrimaryLibrarySelection,
-                onEnqueuePrimarySelection = onEnqueuePrimaryLibrarySelection,
-                onClearSelection = onClearLibrarySelection,
-                skinSettings = skinSettings,
-                onSetLegacyRenderMode = onSetLegacyRenderMode,
-                onSetAutoContrastGuard = onSetAutoContrastGuard,
-                onDeleteImportedSkin = onDeleteImportedSkin,
-              )
+          androidx.compose.animation.AnimatedVisibility(
+            visible = isSettingsOpen,
+            enter =
+              slideInHorizontally(
+                initialOffsetX = { it },
+                animationSpec = tween(durationMillis = 200),
+              ) + fadeIn(animationSpec = tween(durationMillis = 160)),
+            exit =
+              slideOutHorizontally(
+                targetOffsetX = { it },
+                animationSpec = tween(durationMillis = 180),
+              ) + fadeOut(animationSpec = tween(durationMillis = 140)),
+          ) {
+            Box(
+              modifier =
+                Modifier
+                  .fillMaxSize()
+                  .background(skin.chassis.panelSurface),
+            ) {
+              settingsContent()
             }
           }
         }
 
-        // Bottom Thumb-Zone Primary Tabs: ALWAYS visible & reachable (ADR-019 / ADR-023)
+        // Bottom Thumb-Zone Primary Tabs: ALWAYS visible & reachable (ADR-019 / ADR-023 / ADR-029)
         Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -377,7 +443,7 @@ fun UnifiedQueueLibraryPanel(
             }
           BeveledLedToggleButton(
             label = queueLabel,
-            checked = sheetMode == SheetMode.PLAYLIST || queueTabFlashing,
+            checked = (!isSettingsOpen && activePagerTab == 0) || queueTabFlashing,
             onClick = {
               onSwitchSheetMode(SheetMode.PLAYLIST)
               scope.launch { pagerState.animateScrollToPage(0) }
@@ -388,7 +454,7 @@ fun UnifiedQueueLibraryPanel(
           )
           BeveledLedToggleButton(
             label = "LIBRARY",
-            checked = sheetMode == SheetMode.LIBRARY,
+            checked = !isSettingsOpen && activePagerTab == 1,
             onClick = {
               onSwitchSheetMode(SheetMode.LIBRARY)
               scope.launch { pagerState.animateScrollToPage(1) }
@@ -397,9 +463,15 @@ fun UnifiedQueueLibraryPanel(
             spriteOn = skin.sprites.mobileTabLibraryOn,
             modifier = Modifier.weight(1f).height(30.dp),
           )
+          SettingsGearButton(
+            onClick = onOpenSettings,
+            highlighted = isSettingsOpen,
+            glyphSize = 14.dp,
+            modifier = Modifier.size(30.dp),
+          )
         }
 
-        // Compact Micro-Transport Bar: shown when Main Deck has panned out of view
+        // Compact Micro-Transport Bar: always visible when expanded (including Settings) since Main Deck has panned out of view
         AnimatedVisibility(
           visible = isExpanded,
           enter = expandVertically(),

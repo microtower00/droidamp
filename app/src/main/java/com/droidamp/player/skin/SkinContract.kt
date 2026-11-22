@@ -1,9 +1,23 @@
 package com.droidamp.player.skin
 
+import androidx.compose.ui.graphics.Color
 import com.droidamp.player.interop.DetectedWinampFormat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+
+data class SkinMiniPreviewPalette(
+  val panelBg: Color = ClassicDroidAmpSkin.chassis.panelSurface,
+  val titleBarStart: Color = ClassicDroidAmpSkin.chassis.titleBarActiveStart,
+  val titleBarEnd: Color = ClassicDroidAmpSkin.chassis.titleBarActiveEnd,
+  val vfdBg: Color = ClassicDroidAmpSkin.vfd.wellBackground,
+  val vfdPhosphor: Color = ClassicDroidAmpSkin.vfd.phosphorPrimary,
+  val accent: Color = ClassicDroidAmpSkin.vfd.ledAmber,
+) {
+  companion object {
+    val DEFAULT = SkinMiniPreviewPalette()
+  }
+}
 
 enum class SkinSource {
   BUILT_IN,
@@ -22,6 +36,7 @@ data class SkinEntry(
   val origin: SkinOrigin = SkinOrigin.BUILT_IN,
   val uriOrPath: String? = null,
   val author: String = "DroidAmp",
+  val previewPalette: SkinMiniPreviewPalette = SkinMiniPreviewPalette.DEFAULT,
 )
 
 data class SkinSettingsState(
@@ -97,6 +112,12 @@ interface SkinRepository {
    */
   suspend fun importSkinFromUri(uriString: String): Result<SkinEntry?>
 
+  suspend fun importSkinFromBytes(
+    fileName: String,
+    rawBytes: ByteArray,
+  ): Result<SkinEntry?> =
+    Result.failure(UnsupportedOperationException("Skin import unavailable"))
+
   suspend fun resolveDuplicateImport(
     conflict: SkinRecoveryNotice.DuplicateSkinConflict,
     replaceExisting: Boolean,
@@ -140,6 +161,12 @@ class StaticSkinRepository(
   override fun refreshSkins(linkedRootUris: List<String>) = Unit
   override fun selectSkin(skinId: String) = Unit
   override suspend fun importSkinFromUri(uriString: String): Result<SkinEntry?> =
+    Result.failure(UnsupportedOperationException("Skin import unavailable in preview"))
+
+  override suspend fun importSkinFromBytes(
+    fileName: String,
+    rawBytes: ByteArray,
+  ): Result<SkinEntry?> =
     Result.failure(UnsupportedOperationException("Skin import unavailable in preview"))
 
   override suspend fun resolveDuplicateImport(

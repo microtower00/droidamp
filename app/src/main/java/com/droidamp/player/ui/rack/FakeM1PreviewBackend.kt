@@ -32,6 +32,7 @@ import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.sin
+import kotlin.random.Random
 
 /**
  * Milestone 1 interactive preview engine.
@@ -41,6 +42,7 @@ class FakeAudioEngineController(
   private val scope: CoroutineScope,
   private val enableSimulationTicker: Boolean = true,
   private val tickerDispatcher: CoroutineDispatcher = Dispatchers.Default,
+  private val random: Random = Random.Default,
 ) : AudioEngineController {
 
   private val _playbackState = MutableStateFlow(PlaybackState())
@@ -62,6 +64,14 @@ class FakeAudioEngineController(
   private var tickerJob: Job? = null
   private val peakCaps = FloatArray(VisualizerFrame.SPECTRUM_BAR_COUNT)
   private var phase = 0f
+  private var unshuffledQueue: List<AudioTrack> = emptyList()
+
+  var lowLatencyAudioBufferEnabled: Boolean = false
+    private set
+
+  override fun setLowLatencyAudioBuffer(enabled: Boolean) {
+    lowLatencyAudioBufferEnabled = enabled
+  }
 
   private fun startTickerIfNeeded() {
     synchronized(stateLock) {
@@ -207,13 +217,7 @@ class FakeAudioEngineController(
     synchronized(stateLock) {
       _playbackState.update { state ->
         if (state.queue.isEmpty()) return@update state
-        val nextIdx =
-          if (state.shuffle && state.queue.size > 1) {
-            val candidates = state.queue.indices.filter { it != state.currentIndex }
-            candidates.random()
-          } else {
-            (state.currentIndex + 1) % state.queue.size
-          }
+        val nextIdx = (state.currentIndex + 1) % state.queue.size
         state.copy(currentIndex = nextIdx, positionMs = 0L)
       }
     }
@@ -257,12 +261,26 @@ class FakeAudioEngineController(
     synchronized(stateLock) {
       _playbackState.update { state ->
         if (tracks.isEmpty()) {
+          unshuffledQueue = emptyList()
           state.copy(queue = emptyList(), currentIndex = -1, positionMs = 0L, status = PlaybackStatus.STOPPED)
         } else {
+          unshuffledQueue = tracks
           val safeIdx = startIndex.coerceIn(0, tracks.lastIndex)
+          val (resolvedQueue, resolvedIdx) =
+            if (state.shuffle && tracks.size > 1) {
+              if (startIndex <= 0) {
+                tracks.shuffled(random) to 0
+              } else {
+                val picked = tracks[safeIdx]
+                val rest = tracks.filterIndexed { i, _ -> i != safeIdx }.shuffled(random)
+                (listOf(picked) + rest) to 0
+              }
+            } else {
+              tracks to safeIdx
+            }
           state.copy(
-            queue = tracks,
-            currentIndex = safeIdx,
+            queue = resolvedQueue,
+            currentIndex = resolvedIdx,
             positionMs = 0L,
             status = if (autoPlay) PlaybackStatus.PLAYING else PlaybackStatus.STOPPED,
           )
@@ -278,8 +296,26 @@ class FakeAudioEngineController(
     if (tracks.isEmpty()) return
     synchronized(stateLock) {
       _playbackState.update { state ->
-        val newQueue = state.queue + tracks
-        val newIndex = if (state.currentIndex < 0) 0 else state.currentIndex
+        unshuffledQueue =
+          if (unshuffledQueue.isEmpty() && state.queue.isNotEmpty()) {
+            state.queue + tracks
+          } else {
+            unshuffledQueue + tracks
+          }
+        val (newQueue, newIndex) =
+          if (state.shuffle) {
+            if (state.queue.isEmpty() || state.currentIndex < 0) {
+              (state.queue + tracks).shuffled(random) to 0
+            } else {
+              val prefix = state.queue.subList(0, state.currentIndex + 1)
+              val tail = state.queue.subList(state.currentIndex + 1, state.queue.size) + tracks
+              (prefix + tail.shuffled(random)) to state.currentIndex
+            }
+          } else {
+            val q = state.queue + tracks
+            val idx = if (state.currentIndex < 0) 0 else state.currentIndex
+            q to idx
+          }
         state.copy(queue = newQueue, currentIndex = newIndex)
       }
     }
@@ -291,6 +327,7 @@ class FakeAudioEngineController(
       _playbackState.update { state ->
         val currentTrackId = state.currentTrack?.id
         val kept = state.queue.filterIndexed { idx, _ -> idx !in indices }
+        unshuffledQueue = reconcileUnshuffledFake(unshuffledQueue, kept)
         if (kept.isEmpty()) {
           state.copy(queue = emptyList(), currentIndex = -1, positionMs = 0L, status = PlaybackStatus.STOPPED)
         } else {
@@ -312,6 +349,7 @@ class FakeAudioEngineController(
   override fun clearQueue() {
     synchronized(stateLock) {
       stop()
+      unshuffledQueue = emptyList()
       _playbackState.update { it.copy(queue = emptyList(), currentIndex = -1, positionMs = 0L) }
     }
   }
@@ -325,6 +363,7 @@ class FakeAudioEngineController(
         val mutable = state.queue.toMutableList()
         val moved = mutable.removeAt(fromIndex)
         mutable.add(toIndex, moved)
+        unshuffledQueue = mutable
         val newCurrent =
           when {
             state.currentIndex == fromIndex -> toIndex
@@ -333,6 +372,57 @@ class FakeAudioEngineController(
             else -> state.currentIndex
           }
         state.copy(queue = mutable, currentIndex = newCurrent)
+      }
+    }
+  }
+
+  override fun moveTracksBy(indices: Set<Int>, delta: Int) {
+    if (indices.isEmpty() || delta == 0) return
+    val stepDir = if (delta < 0) -1 else 1
+    val steps = kotlin.math.abs(delta)
+    synchronized(stateLock) {
+      _playbackState.update { state ->
+        val mutable = state.queue.toMutableList()
+        var tracked = indices.filter { it in mutable.indices }.sorted()
+        if (tracked.isEmpty()) return@update state
+        var trackedCurrent = state.currentIndex
+        var movedAny = false
+        repeat(steps) {
+          if (stepDir < 0) {
+            if (tracked.first() <= 0) return@repeat
+            for (idx in tracked) {
+              val prev = mutable[idx - 1]
+              mutable[idx - 1] = mutable[idx]
+              mutable[idx] = prev
+              trackedCurrent =
+                when (trackedCurrent) {
+                  idx -> idx - 1
+                  idx - 1 -> idx
+                  else -> trackedCurrent
+                }
+            }
+            tracked = tracked.map { it - 1 }
+            movedAny = true
+          } else {
+            if (tracked.last() >= mutable.lastIndex) return@repeat
+            for (idx in tracked.asReversed()) {
+              val next = mutable[idx + 1]
+              mutable[idx + 1] = mutable[idx]
+              mutable[idx] = next
+              trackedCurrent =
+                when (trackedCurrent) {
+                  idx -> idx + 1
+                  idx + 1 -> idx
+                  else -> trackedCurrent
+                }
+            }
+            tracked = tracked.map { it + 1 }
+            movedAny = true
+          }
+        }
+        if (!movedAny) return@update state
+        unshuffledQueue = mutable
+        state.copy(queue = mutable, currentIndex = trackedCurrent)
       }
     }
   }
@@ -347,6 +437,7 @@ class FakeAudioEngineController(
             PlaylistSortOrder.FILENAME -> state.queue.sortedBy { it.fileName.lowercase() }
             PlaylistSortOrder.PATH -> state.queue.sortedBy { "${it.folderPath}/${it.fileName}".lowercase() }
           }
+        unshuffledQueue = sorted
         val newIdx = sorted.indexOfFirst { it.id == currentId }.let { if (it >= 0) it else state.currentIndex }
         state.copy(queue = sorted, currentIndex = newIdx)
       }
@@ -358,6 +449,7 @@ class FakeAudioEngineController(
       _playbackState.update { state ->
         val currentId = state.currentTrack?.id
         val reversed = state.queue.reversed()
+        unshuffledQueue = reversed
         val newIdx = reversed.indexOfFirst { it.id == currentId }.let { if (it >= 0) it else state.currentIndex }
         state.copy(queue = reversed, currentIndex = newIdx)
       }
@@ -369,7 +461,8 @@ class FakeAudioEngineController(
       _playbackState.update { state ->
         if (state.queue.size <= 1) return@update state
         val currentId = state.currentTrack?.id
-        val shuffled = state.queue.shuffled()
+        val shuffled = state.queue.shuffled(random)
+        unshuffledQueue = shuffled
         val newIdx = shuffled.indexOfFirst { it.id == currentId }.let { if (it >= 0) it else 0 }
         state.copy(queue = shuffled, currentIndex = newIdx)
       }
@@ -471,8 +564,67 @@ class FakeAudioEngineController(
 
   override fun toggleShuffle() {
     synchronized(stateLock) {
-      _playbackState.update { it.copy(shuffle = !it.shuffle) }
+      _playbackState.update { state ->
+        val nextShuffle = !state.shuffle
+        if (nextShuffle) {
+          unshuffledQueue = state.queue
+          if (state.queue.size > 1) {
+            if (state.currentIndex in state.queue.indices) {
+              val current = state.queue[state.currentIndex]
+              val rest = state.queue.filterIndexed { idx, _ -> idx != state.currentIndex }.shuffled(random)
+              state.copy(shuffle = true, queue = listOf(current) + rest, currentIndex = 0)
+            } else {
+              state.copy(shuffle = true, queue = state.queue.shuffled(random))
+            }
+          } else {
+            state.copy(shuffle = true)
+          }
+        } else {
+          val restored = reconcileUnshuffledFake(unshuffledQueue, state.queue)
+          val currentId = state.currentTrack?.id
+          val restoredIdx =
+            if (currentId != null) {
+              restored.indexOfFirst { it.id == currentId }.let { if (it >= 0) it else 0 }
+            } else {
+              state.currentIndex
+            }
+          unshuffledQueue = restored
+          state.copy(shuffle = false, queue = restored, currentIndex = restoredIdx)
+        }
+      }
     }
+  }
+
+  private fun reconcileUnshuffledFake(
+    originalOrder: List<AudioTrack>,
+    currentQueue: List<AudioTrack>,
+  ): List<AudioTrack> {
+    if (currentQueue.isEmpty()) return emptyList()
+    if (originalOrder.isEmpty()) return currentQueue
+    val remainingCounts = HashMap<String, Int>(currentQueue.size)
+    currentQueue.forEach { track -> remainingCounts[track.id] = (remainingCounts[track.id] ?: 0) + 1 }
+    val restored = ArrayList<AudioTrack>(currentQueue.size)
+    val usedFromOriginal = HashMap<String, Int>(currentQueue.size)
+    for (track in originalOrder) {
+      val avail = remainingCounts[track.id] ?: 0
+      if (avail > 0) {
+        restored.add(track)
+        remainingCounts[track.id] = avail - 1
+        usedFromOriginal[track.id] = (usedFromOriginal[track.id] ?: 0) + 1
+      }
+    }
+    if (restored.size < currentQueue.size) {
+      val skipCounts = HashMap(usedFromOriginal)
+      for (track in currentQueue) {
+        val toSkip = skipCounts[track.id] ?: 0
+        if (toSkip > 0) {
+          skipCounts[track.id] = toSkip - 1
+        } else {
+          restored.add(track)
+        }
+      }
+    }
+    return restored
   }
 
   override fun cycleRepeatMode() {

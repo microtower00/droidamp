@@ -1123,8 +1123,19 @@ class Tier3PairwiseCombinationsTest {
         assertEquals(4, reparsed.crossfadeSeconds)
         assertEquals(-2.5f, reparsed.replayGainPreampDb, 0.01f)
 
-        // Constructing DroidAmpViewModel while STOPPED applies ADR-007 cold-launch volume reset (160 -> 204)
-        val vm = DroidAmpViewModel(ctrl2, FakeMusicSourceRepository(startLinked = true))
+        // Constructing DroidAmpViewModel with CLASSIC_80_PERCENT [OG] while STOPPED applies ADR-007 cold-launch volume reset (160 -> 204)
+        val vm =
+          DroidAmpViewModel(
+            ctrl2,
+            FakeMusicSourceRepository(startLinked = true),
+            appPreferencesRepository =
+              com.droidamp.player.storage.InMemoryAppPreferencesRepository(
+                com.droidamp.player.storage.AppPreferences(
+                  volumeKeyMode = com.droidamp.player.storage.VolumeKeyMode.INDEPENDENT_DECK,
+                  startupVolumeMode = com.droidamp.player.storage.StartupVolumeMode.CLASSIC_80_PERCENT,
+                ),
+              ),
+          )
         assertEquals(PlaybackState.DEFAULT_COLD_LAUNCH_VOLUME, ctrl2.playbackState.value.volume)
 
         // Restore parsed winamp.ini volume (160 -> 62%) and verify full deck UI state

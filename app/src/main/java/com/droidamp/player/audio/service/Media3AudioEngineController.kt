@@ -7,6 +7,7 @@ import android.content.ServiceConnection
 import android.os.IBinder
 import com.droidamp.player.audio.dsp.ReplayGainMetadata
 import com.droidamp.player.domain.contract.AudioEngineController
+import com.droidamp.player.domain.contract.PlaybackRecoveryNotice
 import com.droidamp.player.domain.model.AudioTrack
 import com.droidamp.player.domain.model.ChannelMode
 import com.droidamp.player.domain.model.DspSettings
@@ -20,6 +21,8 @@ import com.droidamp.player.domain.model.TimeDisplayMode
 import com.droidamp.player.domain.model.VisualizerFrame
 import com.droidamp.player.domain.model.VisualizerMode
 import com.droidamp.player.domain.model.WinampEqSpec
+import com.droidamp.player.storage.StartupVolumeMode
+import com.droidamp.player.storage.VolumeKeyMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -71,6 +74,7 @@ interface AudioEngineGateway {
     fun onRemoteTransportAction(action: RemoteTransportAction)
     fun onRemoteSeekTo(positionMs: Long)
     fun onServiceSnapshotRecovered(snapshot: ServiceRuntimeSnapshot) {}
+    fun onTrackPlaybackError(trackIndex: Int, track: AudioTrack?, reason: String) {}
   }
 
   /**
@@ -107,6 +111,8 @@ interface AudioEngineGateway {
     nextCandidate: CrossfadeController.NextTrackCandidate?,
   )
   fun cancelCrossfade()
+  fun setHandleAudioBecomingNoisy(enabled: Boolean) {}
+  fun setLowLatencyAudioBuffer(enabled: Boolean) {}
   fun release() {}
 }
 
@@ -120,6 +126,9 @@ class Media3AudioEngineController(
   private val scope: CoroutineScope,
   private val visualizerPollIntervalMs: Long = VISUALIZER_POLL_INTERVAL_MS,
   private val positionPollIntervalMs: Long = POSITION_POLL_INTERVAL_MS,
+  private val systemAudioBridge: SystemAudioBridge = NoOpSystemAudioBridge,
+  private val nowMsProvider: () -> Long = System::currentTimeMillis,
+  private val random: kotlin.random.Random = kotlin.random.Random.Default,
 ) : AudioEngineController, AudioEngineGateway.Listener, Closeable {
 
   private val _playbackState = MutableStateFlow(PlaybackState())
@@ -131,8 +140,22 @@ class Media3AudioEngineController(
   private val _dspSettings = MutableStateFlow(DspSettings())
   override val dspSettings: StateFlow<DspSettings> = _dspSettings.asStateFlow()
 
+  private val _playbackRecoveryNotice = MutableStateFlow<PlaybackRecoveryNotice?>(null)
+  override val playbackRecoveryNotice: StateFlow<PlaybackRecoveryNotice?> =
+    _playbackRecoveryNotice.asStateFlow()
+
   private val explicitReplayGainByTrackId = LinkedHashMap<String, ReplayGainMetadata>()
   private var parsedReplayGainForCurrentTrack: ReplayGainMetadata = ReplayGainMetadata.EMPTY
+
+  private var volumeKeyMode: VolumeKeyMode = VolumeKeyMode.SYNC_SYSTEM
+  private var pauseOnDisconnect: Boolean = true
+  private var autoResumeOnReconnect: Boolean = false
+  private var startupVolumeMode: StartupVolumeMode = StartupVolumeMode.REMEMBER_LAST
+  private var deckInternalVolume: Int = PlaybackState.DEFAULT_COLD_LAUNCH_VOLUME
+  private var pausedByOutputDisconnect: Boolean = false
+  private var lastStatusBecamePausedByGatewayAtMs: Long = 0L
+  private var consecutiveTrackErrorCount: Int = 0
+  private var lastSentSystemVolumeAtMs: Long = 0L
 
   private var coldLaunchResetApplied = false
   private var volumeModifiedInSession = false
@@ -145,6 +168,7 @@ class Media3AudioEngineController(
   private var timeDisplayModeModifiedInSession = false
   private var sessionRecoveredFromRunningService = false
 
+  private var unshuffledQueue: List<AudioTrack> = emptyList()
   private var pendingShuffledNextIndex: Int? = null
   private var visualizerJob: Job? = null
   private var positionJob: Job? = null
@@ -153,6 +177,47 @@ class Media3AudioEngineController(
 
   init {
     gateway.setListener(this)
+    if (isSystemSyncActive()) {
+      val sysVol = systemAudioBridge.getStreamVolume0To255()
+      _playbackState.update { it.copy(volume = sysVol) }
+      gateway.applyVolume(PlaybackState.MAX_VOLUME)
+    }
+    systemAudioBridge.setVolumeChangeListener { streamVol ->
+      if (!isSystemSyncActive()) return@setVolumeChangeListener
+      if (nowMsProvider() - lastSentSystemVolumeAtMs < SYSTEM_VOLUME_ECHO_WINDOW_MS) {
+        return@setVolumeChangeListener
+      }
+      _playbackState.update { it.copy(volume = streamVol.coerceIn(PlaybackState.MIN_VOLUME, PlaybackState.MAX_VOLUME)) }
+    }
+    systemAudioBridge.setOutputRouteListener(
+      object : SystemAudioBridge.OutputRouteListener {
+        override fun onAudioBecomingNoisy() {
+          if (!pauseOnDisconnect) return
+          val currentStatus = _playbackState.value.status
+          when {
+            currentStatus == PlaybackStatus.PLAYING -> {
+              pause()
+              pausedByOutputDisconnect = true
+            }
+            currentStatus == PlaybackStatus.PAUSED &&
+              nowMsProvider() - lastStatusBecamePausedByGatewayAtMs <= GATEWAY_NOISY_PAUSE_WINDOW_MS -> {
+              pausedByOutputDisconnect = true
+            }
+          }
+        }
+
+        override fun onExternalOutputConnected() {
+          if (autoResumeOnReconnect &&
+            pausedByOutputDisconnect &&
+            _playbackState.value.status == PlaybackStatus.PAUSED &&
+            _playbackState.value.queue.isNotEmpty()
+          ) {
+            pausedByOutputDisconnect = false
+            play()
+          }
+        }
+      },
+    )
     hydrationJob =
       scope.launch {
         val snapshot = preferencesStore.loadSnapshot()
@@ -160,6 +225,9 @@ class Media3AudioEngineController(
         applyHydratedPreferences(snapshot)
       }
   }
+
+  private fun isSystemSyncActive(): Boolean =
+    volumeKeyMode == VolumeKeyMode.SYNC_SYSTEM && systemAudioBridge.supportsSystemVolumeSync
 
   private suspend fun applyHydratedPreferences(snapshot: DspPreferencesSnapshot) {
     if (sessionRecoveredFromRunningService) {
@@ -171,11 +239,15 @@ class Media3AudioEngineController(
     val shouldPreserveRuntimeVolume =
       coldLaunchResetApplied || volumeModifiedInSession || !isStopped
 
+    if (!volumeModifiedInSession && !coldLaunchResetApplied) {
+      deckInternalVolume = snapshot.volume
+    }
+
     val resolvedVolume =
-      if (shouldPreserveRuntimeVolume) {
-        current.volume
-      } else {
-        snapshot.volume
+      when {
+        isSystemSyncActive() -> systemAudioBridge.getStreamVolume0To255()
+        shouldPreserveRuntimeVolume -> current.volume
+        else -> snapshot.volume
       }
     val resolvedBalance =
       if (balanceModifiedInSession) current.balance else snapshot.balance
@@ -207,17 +279,22 @@ class Media3AudioEngineController(
 
     gateway.applyDspSettings(_dspSettings.value)
     gateway.applyEqualizerState(resolvedEq)
-    gateway.applyVolume(resolvedVolume)
+    gateway.applyVolume(
+      if (isSystemSyncActive()) PlaybackState.MAX_VOLUME else resolvedVolume,
+    )
     gateway.applyBalance(resolvedBalance)
     gateway.setShuffleEnabled(resolvedShuffle)
     gateway.setRepeatMode(resolvedRepeat)
 
-    if (coldLaunchResetApplied && isStopped && snapshot.volume != resolvedVolume) {
+    if (!isSystemSyncActive() && coldLaunchResetApplied && isStopped && snapshot.volume != resolvedVolume) {
       preferencesStore.saveVolume(resolvedVolume)
     }
   }
 
   override fun play() {
+    pausedByOutputDisconnect = false
+    lastStatusBecamePausedByGatewayAtMs = 0L
+    consecutiveTrackErrorCount = 0
     val state = _playbackState.value
     if (state.queue.isEmpty()) return
     val targetIndex = if (state.currentIndex in state.queue.indices) state.currentIndex else 0
@@ -235,6 +312,8 @@ class Media3AudioEngineController(
   }
 
   override fun pause() {
+    pausedByOutputDisconnect = false
+    lastStatusBecamePausedByGatewayAtMs = 0L
     gateway.cancelCrossfade()
     val wasPlaying = _playbackState.value.status == PlaybackStatus.PLAYING
     if (!wasPlaying) return
@@ -247,6 +326,9 @@ class Media3AudioEngineController(
   }
 
   override fun stop() {
+    pausedByOutputDisconnect = false
+    lastStatusBecamePausedByGatewayAtMs = 0L
+    consecutiveTrackErrorCount = 0
     gateway.cancelCrossfade()
     _playbackState.update { it.copy(status = PlaybackStatus.STOPPED, positionMs = 0L) }
     positionJob?.cancel()
@@ -259,6 +341,7 @@ class Media3AudioEngineController(
   }
 
   override fun next() {
+    consecutiveTrackErrorCount = 0
     gateway.cancelCrossfade()
     val state = _playbackState.value
     if (state.queue.isEmpty()) return
@@ -271,6 +354,7 @@ class Media3AudioEngineController(
   }
 
   override fun previous() {
+    consecutiveTrackErrorCount = 0
     gateway.cancelCrossfade()
     val state = _playbackState.value
     if (state.queue.isEmpty()) return
@@ -304,6 +388,8 @@ class Media3AudioEngineController(
   }
 
   override fun playTrackAt(index: Int) {
+    pausedByOutputDisconnect = false
+    consecutiveTrackErrorCount = 0
     gateway.cancelCrossfade()
     val state = _playbackState.value
     if (index !in state.queue.indices) return
@@ -321,9 +407,12 @@ class Media3AudioEngineController(
     startIndex: Int,
     autoPlay: Boolean,
   ) {
+    pausedByOutputDisconnect = false
+    consecutiveTrackErrorCount = 0
     gateway.cancelCrossfade()
     pendingShuffledNextIndex = null
     if (tracks.isEmpty()) {
+      unshuffledQueue = emptyList()
       _playbackState.update {
         it.copy(
           queue = emptyList(),
@@ -344,18 +433,31 @@ class Media3AudioEngineController(
       return
     }
 
-    val safeIndex = startIndex.coerceIn(0, tracks.lastIndex)
+    unshuffledQueue = tracks
+    val safeRequested = startIndex.coerceIn(0, tracks.lastIndex)
+    val (resolvedQueue, safeIndex) =
+      if (_playbackState.value.shuffle && tracks.size > 1) {
+        if (startIndex <= 0) {
+          tracks.shuffled(random) to 0
+        } else {
+          val picked = tracks[safeRequested]
+          val rest = tracks.filterIndexed { i, _ -> i != safeRequested }.shuffled(random)
+          (listOf(picked) + rest) to 0
+        }
+      } else {
+        tracks to safeRequested
+      }
     val nextStatus = if (autoPlay) PlaybackStatus.PLAYING else PlaybackStatus.STOPPED
     _playbackState.update {
       it.copy(
-        queue = tracks,
+        queue = resolvedQueue,
         currentIndex = safeIndex,
         positionMs = 0L,
         status = nextStatus,
       )
     }
-    resetReplayGainForTrack(tracks[safeIndex].id)
-    gateway.setQueue(tracks, safeIndex, autoPlay)
+    resetReplayGainForTrack(resolvedQueue[safeIndex].id)
+    gateway.setQueue(resolvedQueue, safeIndex, autoPlay)
     if (autoPlay) {
       ensurePollingJobs()
     } else {
@@ -370,8 +472,26 @@ class Media3AudioEngineController(
     var updatedIndex = -1
     var wasUnindexed = false
     _playbackState.update { state ->
-      val newQueue = state.queue + tracks
-      val newIndex = if (state.currentIndex < 0) 0 else state.currentIndex
+      unshuffledQueue =
+        if (unshuffledQueue.isEmpty() && state.queue.isNotEmpty()) {
+          state.queue + tracks
+        } else {
+          unshuffledQueue + tracks
+        }
+      val (newQueue, newIndex) =
+        if (state.shuffle) {
+          if (state.queue.isEmpty() || state.currentIndex < 0) {
+            (state.queue + tracks).shuffled(random) to 0
+          } else {
+            val prefix = state.queue.subList(0, state.currentIndex + 1)
+            val tail = state.queue.subList(state.currentIndex + 1, state.queue.size) + tracks
+            (prefix + tail.shuffled(random)) to state.currentIndex
+          }
+        } else {
+          val q = state.queue + tracks
+          val idx = if (state.currentIndex < 0) 0 else state.currentIndex
+          q to idx
+        }
       wasUnindexed = state.currentIndex < 0
       updatedQueue = newQueue
       updatedIndex = newIndex
@@ -396,6 +516,7 @@ class Media3AudioEngineController(
     _playbackState.update { state ->
       previousCurrentId = state.currentTrack?.id
       val kept = state.queue.filterIndexed { idx, _ -> idx !in indices }
+      unshuffledQueue = reconcileUnshuffledQueue(unshuffledQueue, kept)
       if (kept.isEmpty()) {
         newQueue = emptyList()
         newIndex = -1
@@ -452,6 +573,7 @@ class Media3AudioEngineController(
   override fun clearQueue() {
     stop()
     pendingShuffledNextIndex = null
+    unshuffledQueue = emptyList()
     _playbackState.update { it.copy(queue = emptyList(), currentIndex = -1, positionMs = 0L) }
     parsedReplayGainForCurrentTrack = ReplayGainMetadata.EMPTY
     gateway.clearReplayGainIfEmpty()
@@ -479,8 +601,69 @@ class Media3AudioEngineController(
           else -> state.currentIndex
         }
       movedQueue = mutable
+      unshuffledQueue = mutable
       newIndex = adjustedIndex
       state.copy(queue = mutable, currentIndex = adjustedIndex)
+    }
+    movedQueue?.let {
+      pendingShuffledNextIndex = null
+      gateway.syncQueueWithoutInterrupting(it, newIndex)
+    }
+  }
+
+  override fun moveTracksBy(
+    indices: Set<Int>,
+    delta: Int,
+  ) {
+    if (indices.isEmpty() || delta == 0) return
+    val stepDir = if (delta < 0) -1 else 1
+    val steps = kotlin.math.abs(delta)
+    var movedQueue: List<AudioTrack>? = null
+    var newIndex = -1
+    _playbackState.update { state ->
+      val mutable = state.queue.toMutableList()
+      var tracked = indices.filter { it in mutable.indices }.sorted()
+      if (tracked.isEmpty()) return@update state
+      var trackedCurrent = state.currentIndex
+      var movedAny = false
+      repeat(steps) {
+        if (stepDir < 0) {
+          if (tracked.first() <= 0) return@repeat
+          for (idx in tracked) {
+            val prev = mutable[idx - 1]
+            mutable[idx - 1] = mutable[idx]
+            mutable[idx] = prev
+            trackedCurrent =
+              when (trackedCurrent) {
+                idx -> idx - 1
+                idx - 1 -> idx
+                else -> trackedCurrent
+              }
+          }
+          tracked = tracked.map { it - 1 }
+          movedAny = true
+        } else {
+          if (tracked.last() >= mutable.lastIndex) return@repeat
+          for (idx in tracked.asReversed()) {
+            val next = mutable[idx + 1]
+            mutable[idx + 1] = mutable[idx]
+            mutable[idx] = next
+            trackedCurrent =
+              when (trackedCurrent) {
+                idx -> idx + 1
+                idx + 1 -> idx
+                else -> trackedCurrent
+              }
+          }
+          tracked = tracked.map { it + 1 }
+          movedAny = true
+        }
+      }
+      if (!movedAny) return@update state
+      movedQueue = mutable
+      unshuffledQueue = mutable
+      newIndex = trackedCurrent
+      state.copy(queue = mutable, currentIndex = trackedCurrent)
     }
     movedQueue?.let {
       pendingShuffledNextIndex = null
@@ -502,6 +685,7 @@ class Media3AudioEngineController(
         }
       val newIdx = sorted.indexOfFirst { it.id == currentId }.let { if (it >= 0) it else state.currentIndex }
       updatedQueue = sorted
+      unshuffledQueue = sorted
       updatedIndex = newIdx
       state.copy(queue = sorted, currentIndex = newIdx)
     }
@@ -517,6 +701,7 @@ class Media3AudioEngineController(
       val reversed = state.queue.reversed()
       val newIdx = reversed.indexOfFirst { it.id == currentId }.let { if (it >= 0) it else state.currentIndex }
       updatedQueue = reversed
+      unshuffledQueue = reversed
       updatedIndex = newIdx
       state.copy(queue = reversed, currentIndex = newIdx)
     }
@@ -530,9 +715,10 @@ class Media3AudioEngineController(
     _playbackState.update { state ->
       if (state.queue.size <= 1) return@update state
       val currentId = state.currentTrack?.id
-      val shuffled = state.queue.shuffled()
+      val shuffled = state.queue.shuffled(random)
       val newIdx = shuffled.indexOfFirst { it.id == currentId }.let { if (it >= 0) it else 0 }
       updatedQueue = shuffled
+      unshuffledQueue = shuffled
       updatedIndex = newIdx
       state.copy(queue = shuffled, currentIndex = newIdx)
     }
@@ -546,8 +732,15 @@ class Media3AudioEngineController(
     val clamped = volume0To255.coerceIn(PlaybackState.MIN_VOLUME, PlaybackState.MAX_VOLUME)
     volumeModifiedInSession = true
     _playbackState.update { it.copy(volume = clamped) }
-    gateway.applyVolume(clamped)
-    persistAsync { preferencesStore.saveVolume(clamped) }
+    if (isSystemSyncActive()) {
+      gateway.applyVolume(PlaybackState.MAX_VOLUME)
+      lastSentSystemVolumeAtMs = nowMsProvider()
+      systemAudioBridge.setStreamVolume0To255(clamped)
+    } else {
+      deckInternalVolume = clamped
+      gateway.applyVolume(clamped)
+      persistAsync { preferencesStore.saveVolume(clamped) }
+    }
   }
 
   override fun setBalance(balanceMinus127To127: Int) {
@@ -559,14 +752,20 @@ class Media3AudioEngineController(
   }
 
   /**
-   * ADR-007: Reset internal DSP volume ONLY once per fresh cold launch when playback is STOPPED.
-   * Never resets while audio is PLAYING or PAUSED, and guards against late DataStore hydration.
+   * ADR-007 / ADR-029: Reset internal DSP volume ONLY once per fresh cold launch when playback
+   * is STOPPED and [StartupVolumeMode.CLASSIC_80_PERCENT] (or headless test reset) is requested.
    */
   override fun applyColdLaunchVolumeResetIfStopped(defaultVolume: Int) {
     if (coldLaunchResetApplied) return
     coldLaunchResetApplied = true
 
     val clamped = defaultVolume.coerceIn(PlaybackState.MIN_VOLUME, PlaybackState.MAX_VOLUME)
+    deckInternalVolume = clamped
+    if (isSystemSyncActive()) {
+      gateway.applyVolume(PlaybackState.MAX_VOLUME)
+      return
+    }
+
     var applied = false
     _playbackState.update { state ->
       if (state.status == PlaybackStatus.STOPPED) {
@@ -580,6 +779,52 @@ class Media3AudioEngineController(
       gateway.applyVolume(clamped)
       persistAsync { preferencesStore.saveVolume(clamped) }
     }
+  }
+
+  override fun setVolumeKeyMode(mode: VolumeKeyMode) {
+    if (volumeKeyMode == mode) return
+    volumeKeyMode = mode
+    if (isSystemSyncActive()) {
+      val sysVol = systemAudioBridge.getStreamVolume0To255()
+      _playbackState.update { it.copy(volume = sysVol) }
+      gateway.applyVolume(PlaybackState.MAX_VOLUME)
+    } else {
+      _playbackState.update { it.copy(volume = deckInternalVolume) }
+      gateway.applyVolume(deckInternalVolume)
+    }
+  }
+
+  override fun setPauseOnDisconnect(enabled: Boolean) {
+    pauseOnDisconnect = enabled
+    gateway.setHandleAudioBecomingNoisy(enabled)
+  }
+
+  override fun setAutoResumeOnReconnect(enabled: Boolean) {
+    autoResumeOnReconnect = enabled
+  }
+
+  override fun setStartupVolumeMode(mode: StartupVolumeMode) {
+    startupVolumeMode = mode
+  }
+
+  override fun setLowLatencyAudioBuffer(enabled: Boolean) {
+    gateway.setLowLatencyAudioBuffer(enabled)
+  }
+
+  override fun removeTrackByUri(uriString: String) {
+    val trimmed = uriString.trim()
+    if (trimmed.isEmpty()) return
+    val matchingIndices =
+      _playbackState.value.queue.mapIndexedNotNull { idx, track ->
+        if (track.uriString == trimmed) idx else null
+      }.toSet()
+    if (matchingIndices.isNotEmpty()) {
+      removeIndices(matchingIndices)
+    }
+  }
+
+  override fun dismissPlaybackRecoveryNotice() {
+    _playbackRecoveryNotice.value = null
   }
 
   override fun setEqEnabled(enabled: Boolean) {
@@ -686,12 +931,83 @@ class Media3AudioEngineController(
     shuffleModifiedInSession = true
     pendingShuffledNextIndex = null
     var nextShuffle = false
-    _playbackState.update {
-      nextShuffle = !it.shuffle
-      it.copy(shuffle = nextShuffle)
+    var updatedQueue: List<AudioTrack>? = null
+    var updatedIndex = -1
+    _playbackState.update { state ->
+      nextShuffle = !state.shuffle
+      if (nextShuffle) {
+        unshuffledQueue = state.queue
+        if (state.queue.size > 1) {
+          if (state.currentIndex in state.queue.indices) {
+            val current = state.queue[state.currentIndex]
+            val rest = state.queue.filterIndexed { idx, _ -> idx != state.currentIndex }.shuffled(random)
+            val shuffled = listOf(current) + rest
+            updatedQueue = shuffled
+            updatedIndex = 0
+            state.copy(shuffle = true, queue = shuffled, currentIndex = 0)
+          } else {
+            val shuffled = state.queue.shuffled(random)
+            updatedQueue = shuffled
+            updatedIndex = state.currentIndex
+            state.copy(shuffle = true, queue = shuffled)
+          }
+        } else {
+          state.copy(shuffle = true)
+        }
+      } else {
+        val restored = reconcileUnshuffledQueue(unshuffledQueue, state.queue)
+        val currentId = state.currentTrack?.id
+        val restoredIdx =
+          if (currentId != null) {
+            restored.indexOfFirst { it.id == currentId }.let { if (it >= 0) it else 0 }
+          } else {
+            state.currentIndex
+          }
+        unshuffledQueue = restored
+        if (restored.isNotEmpty()) {
+          updatedQueue = restored
+          updatedIndex = restoredIdx
+        }
+        state.copy(shuffle = false, queue = restored, currentIndex = restoredIdx)
+      }
+    }
+    updatedQueue?.takeIf { it.isNotEmpty() }?.let { synced ->
+      gateway.syncQueueWithoutInterrupting(synced, updatedIndex.coerceAtLeast(0))
     }
     gateway.setShuffleEnabled(nextShuffle)
     persistAsync { preferencesStore.saveShuffle(nextShuffle) }
+  }
+
+  private fun reconcileUnshuffledQueue(
+    originalOrder: List<AudioTrack>,
+    currentQueue: List<AudioTrack>,
+  ): List<AudioTrack> {
+    if (currentQueue.isEmpty()) return emptyList()
+    if (originalOrder.isEmpty()) return currentQueue
+    val remainingCounts = HashMap<String, Int>(currentQueue.size)
+    currentQueue.forEach { track -> remainingCounts[track.id] = (remainingCounts[track.id] ?: 0) + 1 }
+    val restored = ArrayList<AudioTrack>(currentQueue.size)
+    val usedFromOriginal = HashMap<String, Int>(currentQueue.size)
+    for (track in originalOrder) {
+      val avail = remainingCounts[track.id] ?: 0
+      if (avail > 0) {
+        restored.add(track)
+        remainingCounts[track.id] = avail - 1
+        usedFromOriginal[track.id] = (usedFromOriginal[track.id] ?: 0) + 1
+      }
+    }
+    if (restored.size < currentQueue.size) {
+      val skipCounts = HashMap(usedFromOriginal)
+      for (track in currentQueue) {
+        val toSkip = skipCounts[track.id] ?: 0
+        if (toSkip > 0) {
+          skipCounts[track.id] = toSkip - 1
+        } else {
+          restored.add(track)
+        }
+      }
+    }
+    return restored
   }
 
   override fun cycleRepeatMode() {
@@ -787,14 +1103,64 @@ class Media3AudioEngineController(
       return
     }
     val currentStatus = _playbackState.value.status
+    if (isPlaying) {
+      consecutiveTrackErrorCount = 0
+      pausedByOutputDisconnect = false
+      lastStatusBecamePausedByGatewayAtMs = 0L
+    }
     if (isPlaying && currentStatus != PlaybackStatus.PLAYING) {
       _playbackState.update { it.copy(status = PlaybackStatus.PLAYING) }
       ensurePollingJobs()
     } else if (!isPlaying && currentStatus == PlaybackStatus.PLAYING) {
+      lastStatusBecamePausedByGatewayAtMs = nowMsProvider()
       _playbackState.update { it.copy(status = PlaybackStatus.PAUSED) }
       positionJob?.cancel()
       positionJob = null
       startVisualizerPollingIfNeeded()
+    }
+  }
+
+  override fun onTrackPlaybackError(
+    trackIndex: Int,
+    track: AudioTrack?,
+    reason: String,
+  ) {
+    val state = _playbackState.value
+    val resolvedIdx =
+      if (trackIndex in state.queue.indices) {
+        trackIndex
+      } else {
+        state.currentIndex
+      }
+    val failedTrack = track ?: state.queue.getOrNull(resolvedIdx) ?: state.currentTrack ?: return
+    if (state.queue.size > 1 && consecutiveTrackErrorCount < state.queue.size - 1) {
+      consecutiveTrackErrorCount++
+      val nextIdx = ((resolvedIdx.coerceAtLeast(0)) + 1) % state.queue.size
+      pendingShuffledNextIndex = null
+      _playbackState.update {
+        it.copy(
+          currentIndex = nextIdx,
+          positionMs = 0L,
+          status = PlaybackStatus.PLAYING,
+        )
+      }
+      resetReplayGainForTrack(state.queue[nextIdx].id)
+      gateway.selectTrackAt(nextIdx, playWhenReady = true)
+      ensurePollingJobs()
+      _playbackRecoveryNotice.value =
+        PlaybackRecoveryNotice.MissingTrackSkipped(
+          track = failedTrack,
+          reason = reason,
+          autoSkippedToNext = true,
+        )
+    } else {
+      stop()
+      _playbackRecoveryNotice.value =
+        PlaybackRecoveryNotice.MissingTrackSkipped(
+          track = failedTrack,
+          reason = reason,
+          autoSkippedToNext = false,
+        )
     }
   }
 
@@ -913,6 +1279,7 @@ class Media3AudioEngineController(
   override fun onServiceSnapshotRecovered(snapshot: ServiceRuntimeSnapshot) {
     if (snapshot.status == PlaybackStatus.STOPPED && snapshot.queue.isEmpty()) return
     sessionRecoveredFromRunningService = true
+    unshuffledQueue = snapshot.queue
     _dspSettings.value = snapshot.dspSettings.sanitized()
     _playbackState.update { current ->
       current.copy(
@@ -975,30 +1342,17 @@ class Media3AudioEngineController(
 
   private fun computeManualNextIndex(state: PlaybackState): Int {
     if (state.queue.isEmpty()) return -1
-    if (state.shuffle && state.queue.size > 1) {
-      val preselected =
-        pendingShuffledNextIndex?.takeIf { it in state.queue.indices && it != state.currentIndex }
-      if (preselected != null) return preselected
-      val candidates = state.queue.indices.filter { it != state.currentIndex }
-      return candidates.random()
-    }
     return (state.currentIndex + 1) % state.queue.size
   }
 
   private fun resolveNextCandidateForCrossfade(state: PlaybackState): CrossfadeController.NextTrackCandidate? {
-    if (state.shuffle && state.queue.size > 1 && state.repeatMode != RepeatMode.ONE) {
-      if (pendingShuffledNextIndex !in state.queue.indices || pendingShuffledNextIndex == state.currentIndex) {
-        pendingShuffledNextIndex = state.queue.indices.filter { it != state.currentIndex }.random()
-      }
-    } else {
-      pendingShuffledNextIndex = null
-    }
+    pendingShuffledNextIndex = null
     return CrossfadeController.resolveNextCandidate(
       queue = state.queue,
       currentIndex = state.currentIndex,
       repeatMode = state.repeatMode,
-      shuffle = state.shuffle,
-      shuffledNextIndex = pendingShuffledNextIndex,
+      shuffle = false,
+      shuffledNextIndex = null,
     )
   }
 
@@ -1116,23 +1470,30 @@ class Media3AudioEngineController(
     gateway.cancelCrossfade()
     gateway.setListener(null)
     gateway.release()
+    systemAudioBridge.setVolumeChangeListener(null)
+    systemAudioBridge.setOutputRouteListener(null)
+    systemAudioBridge.release()
   }
 
   companion object {
     const val VISUALIZER_POLL_INTERVAL_MS = 8L
     const val POSITION_POLL_INTERVAL_MS = 100L
     const val PREVIOUS_RESTART_THRESHOLD_MS = 3_000L
+    const val SYSTEM_VOLUME_ECHO_WINDOW_MS = 350L
+    private const val GATEWAY_NOISY_PAUSE_WINDOW_MS = 1_500L
 
     fun create(
       context: Context,
       scope: CoroutineScope,
       preferencesStore: DspPreferencesStore = DspPreferencesStore.create(context),
+      systemAudioBridge: SystemAudioBridge = AndroidSystemAudioBridge(context),
     ): Media3AudioEngineController {
       val gateway = ServiceBindingAudioEngineGateway(context.applicationContext)
       return Media3AudioEngineController(
         gateway = gateway,
         preferencesStore = preferencesStore,
         scope = scope,
+        systemAudioBridge = systemAudioBridge,
       )
     }
   }
@@ -1164,6 +1525,8 @@ internal class ServiceBindingAudioEngineGateway(
   private var pendingRepeatMode: RepeatMode? = null
   private var pendingShuffle: Boolean? = null
   private var pendingReplayGain: ReplayGainMetadata? = null
+  private var pendingHandleNoisy: Boolean? = null
+  private var pendingLowLatencyAudioBuffer: Boolean? = null
   private var pendingQueue: Triple<List<AudioTrack>, Int, Boolean>? = null
   private var pendingSeekMs: Long? = null
   private var pendingPlayRequest = false
@@ -1225,6 +1588,8 @@ internal class ServiceBindingAudioEngineGateway(
     pendingRepeatMode?.let(gateway::setRepeatMode)
     pendingShuffle?.let(gateway::setShuffleEnabled)
     pendingReplayGain?.let(gateway::applyReplayGainMetadata)
+    pendingHandleNoisy?.let(gateway::setHandleAudioBecomingNoisy)
+    pendingLowLatencyAudioBuffer?.let(gateway::setLowLatencyAudioBuffer)
     pendingQueue?.let { (tracks, startIdx, autoPlay) ->
       if (autoPlay) ensureForegroundServiceStarted()
       gateway.setQueue(tracks, startIdx, autoPlay)
@@ -1377,6 +1742,16 @@ internal class ServiceBindingAudioEngineGateway(
     serviceDelegate?.cancelCrossfade()
   }
 
+  override fun setHandleAudioBecomingNoisy(enabled: Boolean) {
+    pendingHandleNoisy = enabled
+    serviceDelegate?.setHandleAudioBecomingNoisy(enabled)
+  }
+
+  override fun setLowLatencyAudioBuffer(enabled: Boolean) {
+    pendingLowLatencyAudioBuffer = enabled
+    serviceDelegate?.setLowLatencyAudioBuffer(enabled)
+  }
+
   override fun release() {
     if (released) return
     released = true
@@ -1421,5 +1796,9 @@ internal class ServiceBindingAudioEngineGateway(
 
   override fun onRemoteSeekTo(positionMs: Long) {
     controllerListener?.onRemoteSeekTo(positionMs)
+  }
+
+  override fun onTrackPlaybackError(trackIndex: Int, track: AudioTrack?, reason: String) {
+    controllerListener?.onTrackPlaybackError(trackIndex, track, reason)
   }
 }

@@ -225,3 +225,99 @@ private fun DrawScope.drawTransportGlyph(
     }
   }
 }
+
+/**
+ * Pixel-aligned carved hardware gear icon (`⚙`) for Settings Entry Mode A/B (`ADR-029`).
+ */
+@Composable
+fun GearHardwareGlyph(
+  tint: Color,
+  modifier: Modifier = Modifier,
+  glyphSize: Dp = 13.dp,
+) {
+  val skin = LocalDroidAmpSkin.current
+  val etchColor = skin.bevel.highlightOuter.copy(alpha = 0.45f)
+  Canvas(modifier = modifier.size(glyphSize)) {
+    drawGearGlyph(color = etchColor, offset = Offset(1f, 1f))
+    drawGearGlyph(color = tint, offset = Offset.Zero)
+  }
+}
+
+/**
+ * Pixel-aligned hardware back arrow (`←`) for Settings sub-screen titlebars.
+ */
+@Composable
+fun BackArrowHardwareGlyph(
+  tint: Color,
+  modifier: Modifier = Modifier,
+  glyphSize: Dp = 12.dp,
+) {
+  val skin = LocalDroidAmpSkin.current
+  val etchColor = skin.bevel.highlightOuter.copy(alpha = 0.45f)
+  Canvas(modifier = modifier.size(glyphSize)) {
+    drawBackArrowGlyph(color = etchColor, offset = Offset(1f, 1f))
+    drawBackArrowGlyph(color = tint, offset = Offset.Zero)
+  }
+}
+
+private fun DrawScope.drawGearGlyph(
+  color: Color,
+  offset: Offset,
+) {
+  val cx = size.width * 0.5f + offset.x
+  val cy = size.height * 0.5f + offset.y
+  val rOuter = minOf(size.width, size.height) * 0.44f
+  val rRing = minOf(size.width, size.height) * 0.28f
+  val rHole = minOf(size.width, size.height) * 0.13f
+
+  for (i in 0 until 8) {
+    val angle = (i * kotlin.math.PI / 4.0)
+    val cosA = kotlin.math.cos(angle).toFloat()
+    val sinA = kotlin.math.sin(angle).toFloat()
+    drawLine(
+      color = color,
+      start = Offset(cx + cosA * (rRing * 0.7f), cy + sinA * (rRing * 0.7f)),
+      end = Offset(cx + cosA * rOuter, cy + sinA * rOuter),
+      strokeWidth = (rOuter * 0.34f).coerceAtLeast(1.8f),
+    )
+  }
+  drawCircle(
+    color = color,
+    radius = rRing,
+    center = Offset(cx, cy),
+    style = androidx.compose.ui.graphics.drawscope.Stroke(width = (rOuter * 0.32f).coerceAtLeast(1.6f)),
+  )
+  drawCircle(
+    color = color,
+    radius = rHole * 0.45f,
+    center = Offset(cx, cy),
+  )
+}
+
+private fun DrawScope.drawBackArrowGlyph(
+  color: Color,
+  offset: Offset,
+) {
+  val ox = offset.x
+  val oy = offset.y
+  val padX = size.width * 0.14f
+  val padY = size.height * 0.18f
+  val midY = size.height * 0.5f + oy
+  val tipX = ox + padX
+  val headBackX = ox + size.width * 0.50f
+  val rightX = ox + size.width - padX
+
+  val head =
+    Path().apply {
+      moveTo(tipX, midY)
+      lineTo(headBackX, oy + padY)
+      lineTo(headBackX, oy + size.height - padY)
+      close()
+    }
+  drawPath(head, color)
+  drawRect(
+    color = color,
+    topLeft = Offset(headBackX - 1f, midY - size.height * 0.12f),
+    size = Size((rightX - headBackX + 1f).coerceAtLeast(2f), size.height * 0.24f),
+  )
+}

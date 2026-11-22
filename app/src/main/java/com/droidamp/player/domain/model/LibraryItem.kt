@@ -41,6 +41,25 @@ data class FolderEntry(
   val subfolderCount: Int,
 )
 
+/**
+ * Persisted SAF music folder status exposed to `Settings → Manage Folders` (`ADR-029`).
+ * Inaccessible roots are retained (never silently auto-pruned) so the user can `[RE-GRANT]`,
+ * `[KEEP FOR NOW]`, or explicitly `[REMOVE]` them.
+ */
+data class ManagedSafFolder(
+  val uriString: String,
+  val displayName: String,
+  val isAccessible: Boolean,
+  val trackCount: Int = 0,
+  val subfolderCount: Int = 0,
+)
+
+data class LibraryScanState(
+  val cachedTrackCount: Int = 0,
+  val isRefreshing: Boolean = false,
+  val hasAudioPermission: Boolean = true,
+)
+
 data class SavedPlaylistEntry(
   val id: String,
   val uriString: String,

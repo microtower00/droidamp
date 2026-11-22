@@ -48,9 +48,9 @@ fun EmptyFolderWell(
       Text(
         text =
           if (compactPeek) {
-            "TAP TO LINK YOUR MUSIC FOLDER (SAF)"
+            "TAP TO CHOOSE YOUR MUSIC FOLDER"
           } else {
-            "Link a local music folder to browse folders as playlists.\nTip: Open your Music folder — Android blocks storage root."
+            "Choose a music folder to browse and play.\nTip: Pick a subfolder like Music, not top-level storage."
           },
         style = skin.typography.emptyBody,
         color = skin.vfd.phosphorDim,
@@ -60,7 +60,7 @@ fun EmptyFolderWell(
       if (!compactPeek) {
         Spacer(Modifier.height(18.dp))
         BeveledButton(
-          label = "[ SELECT MUSIC FOLDER ]",
+          label = "SELECT MUSIC FOLDER",
           onClick = onSelectMusicFolder,
           highlighted = true,
           contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),

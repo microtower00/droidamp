@@ -419,6 +419,51 @@ class MediaStoreMusicSourceRepository(
     // MediaStore roots reflect device permission state; nothing to unlink.
   }
 
+  override fun hasMediaStoreAudioPermission(): Boolean = gateway.hasAudioReadPermission()
+
+  override suspend fun rescanLibrary(): Int =
+    withContext(ioDispatcher) {
+      refreshRootsInternal()
+      collectIndexTracks(emptyMap()).size
+    }
+
+  internal suspend fun collectIndexTracks(
+    existingByUri: Map<String, AudioTrack>,
+  ): List<AudioTrack> =
+    withContext(ioDispatcher) {
+      if (!gateway.hasAudioReadPermission()) {
+        _linkedRoots.value = emptyList()
+        return@withContext emptyList()
+      }
+      val tree = buildVirtualTree()
+      updateLinkedRootsFromTree(tree)
+      tree.allNormalizedRecords
+        .sortedBy { it.record.displayName.lowercase(Locale.ROOT) }
+        .map { nr ->
+          val folderPath = nr.folderKey.ifEmpty { ROOT_DISPLAY_SEGMENT }
+          val cached = existingByUri[nr.record.contentUriString]
+          if (cached != null) {
+            cached.copy(
+              id = "ms-${nr.record.mediaId}",
+              fileName = nr.record.displayName,
+              folderPath = folderPath,
+            )
+          } else {
+            AudioMetadataExtractor.buildTrackFromMetadata(
+              id = "ms-${nr.record.mediaId}",
+              uriString = nr.record.contentUriString,
+              fileName = nr.record.displayName,
+              folderPath = folderPath,
+              probed = null,
+              fallbackTitle = nr.record.title,
+              fallbackArtist = nr.record.artist,
+              fallbackAlbum = nr.record.album,
+              fallbackDurationMs = nr.record.durationMs,
+            )
+          }
+        }
+    }
+
   suspend fun refreshRoots() {
     withContext(ioDispatcher) {
       refreshRootsInternal()

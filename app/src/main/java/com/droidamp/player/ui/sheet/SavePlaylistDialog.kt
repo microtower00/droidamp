@@ -42,7 +42,7 @@ fun SavePlaylistDialog(
   onConfirmSave: (baseName: String, format: PlaylistExportFormat, selectedOnly: Boolean) -> Unit,
 ) {
   val skin = LocalDroidAmpSkin.current
-  var nameInput by remember { mutableStateOf("my_playlist") }
+  var nameInput by remember { mutableStateOf("My Playlist") }
   var selectedFormat by remember { mutableStateOf(PlaylistExportFormat.M3U8) }
   var selectedOnly by remember { mutableStateOf(false) }
 
@@ -136,9 +136,11 @@ fun SavePlaylistDialog(
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
               val scopeSummary =
                 if (selectedOnly && selectedTrackCount > 0) {
-                  "$selectedTrackCount SELECTED TRACKS"
+                  val word = if (selectedTrackCount == 1) "SELECTED TRACK" else "SELECTED TRACKS"
+                  "$selectedTrackCount $word"
                 } else {
-                  "$totalTrackCount TRACKS · ${formatWinampDuration(totalDurationMs)}"
+                  val word = if (totalTrackCount == 1) "TRACK" else "TRACKS"
+                  "$totalTrackCount $word · ${formatWinampDuration(totalDurationMs)}"
                 }
               Text(
                 text = if (resolvedFileName.isNotEmpty()) "${resolvedFileName.uppercase()} · $scopeSummary" else "ENTER A VALID NAME",

@@ -14,6 +14,7 @@ import com.droidamp.player.skin.DroidAmpSkin
 import com.droidamp.player.skin.PlaylistPalette
 import com.droidamp.player.skin.SkinLoadDiagnostic
 import com.droidamp.player.skin.SkinMetrics
+import com.droidamp.player.skin.SkinMiniPreviewPalette
 import com.droidamp.player.skin.SkinOrigin
 import com.droidamp.player.skin.SkinRenderMode
 import com.droidamp.player.skin.SkinShapeStyle
@@ -143,6 +144,47 @@ class WszSkinLoader(
       legacyRenderMode = legacyRenderMode,
       contrastGuardEnabled = contrastGuardEnabled,
       preserveCallerId = preserveCallerId,
+    )
+  }
+
+  /**
+   * Extracts lightweight card preview colors for `SkinBrowserScreen` (`ADR-029`)
+   * using the skin's `.txt` / `droidamp.json` tokens and primary `.bmp` surfaces.
+   */
+  fun extractPreviewPalette(archive: WszArchive): SkinMiniPreviewPalette {
+    val baseVis = ViscolorParser.parse(archive.text("viscolor.txt"))
+    val basePl = PleditParser.parse(archive.text("pledit.txt"))
+    val issues = ArrayList<String>()
+    val mainBmp = decodeArchiveBmp(archive, "main.bmp", issues)
+    val titleBarBmp = decodeArchiveBmp(archive, "titlebar.bmp", issues)
+    val numsBmp =
+      decodeArchiveBmp(archive, "nums_ex.bmp", issues)
+        ?: decodeArchiveBmp(archive, "numbers.bmp", issues)
+
+    var chassis = WszPaletteExtractor.extractChassisPalette(mainBmp, titleBarBmp, basePl)
+    var vfd = WszPaletteExtractor.extractVfdPalette(baseVis, basePl, numsBmp)
+    val manifestJson = archive.manifestJson()
+    if (manifestJson != null) {
+      val manifest = DroidAmpSkinManifestParser.parse(manifestJson)
+      val pl = manifest.applyPlaylist(basePl)
+      chassis = manifest.applyChassis(chassis)
+      vfd = manifest.applyVfd(vfd)
+      return SkinMiniPreviewPalette(
+        panelBg = chassis.panelSurface,
+        titleBarStart = chassis.titleBarActiveStart,
+        titleBarEnd = chassis.titleBarActiveEnd,
+        vfdBg = vfd.wellBackground,
+        vfdPhosphor = vfd.phosphorPrimary,
+        accent = pl.currentText,
+      )
+    }
+    return SkinMiniPreviewPalette(
+      panelBg = chassis.panelSurface,
+      titleBarStart = chassis.titleBarActiveStart,
+      titleBarEnd = chassis.titleBarActiveEnd,
+      vfdBg = vfd.wellBackground,
+      vfdPhosphor = vfd.phosphorPrimary,
+      accent = vfd.ledAmber,
     )
   }
 
