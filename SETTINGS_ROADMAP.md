@@ -55,3 +55,13 @@
 | **`winamp.q2`** | Import & Export | Ready (`WinampQ2Codec`, `AutoEqMatcher`) | Import/export per-track & per-folder `AUTO` EQ rules. |
 | **`winamp.ini`** | Import & Export | Ready (`WinampIniParser`) | Migrate Winamp preferences (`volume`, `pan`, `shuffle`, `repeat`, `eq_*`, `rg_*`, `crossfade`). |
 | **`.m3u` / `.m3u8` / `.pls`** | Import & Export | Ready (`WinampPlaylistCodec`, `SavePlaylistDialog`) | Already live in `QUEUE → [LIST]` & `LIBRARY → PLAYLISTS`; Settings can expose default export format & folder. |
+
+---
+
+## 5. Future Milestone Backlog — Multi-Touch Deck Gesture System
+
+> **Goal**: Enable eyes-free, two-finger transport gestures across the Main and Equalizer decks without interfering with single-finger fader or EQ curve precision.
+
+- **2-Finger Horizontal Swipe over Main/EQ Decks**: Swipe right = `FWD` (`Next` / seek forward); Swipe left = `BWD` (`Previous` / seek backward).
+- **2-Finger Double-Tap over Main/EQ Decks**: Toggle `Play / Pause`.
+- **Multi-Touch Disambiguation**: Watching `pointerCount == 2` cleanly cancels in-flight 1-finger slider/EQ curve drags before committing to the multi-touch gesture, plus a future toggle under `CONTROLS` in Settings to enable or disable deck multi-touch gestures.

@@ -3,7 +3,10 @@ package com.droidamp.player.ui.rack
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.provider.OpenableColumns
+import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivityResultRegistryOwner
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -12,8 +15,13 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
@@ -24,6 +32,7 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -40,25 +49,33 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.hideFromAccessibility
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.droidamp.player.domain.contract.PlaybackRecoveryNotice
 import com.droidamp.player.domain.model.StorageBackend
 import com.droidamp.player.skin.ClassicDroidAmpSkin
 import com.droidamp.player.skin.LocalDroidAmpSkin
 import com.droidamp.player.ui.deck.MainDeckPanel
 import com.droidamp.player.ui.eq.EqualizerPanel
+import com.droidamp.player.ui.settings.SettingsHostScreen
 import com.droidamp.player.ui.sheet.SavePlaylistDialog
 import com.droidamp.player.ui.sheet.UnifiedQueueLibraryPanel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
@@ -85,14 +102,24 @@ fun DroidAmpRackScreen(
   val playbackState by viewModel.playbackState.collectAsStateWithLifecycle()
   val visualizerFrameState = viewModel.visualizerFrame.collectAsStateWithLifecycle()
   val linkedRoots by viewModel.linkedRoots.collectAsStateWithLifecycle()
+  val managedSafFolders by viewModel.managedSafFolders.collectAsStateWithLifecycle()
+  val libraryScanState by viewModel.libraryScanState.collectAsStateWithLifecycle()
   val storageBackend by viewModel.storageBackend.collectAsStateWithLifecycle()
+  val appPreferences by viewModel.appPreferences.collectAsStateWithLifecycle()
+  val dspSettings by viewModel.dspSettings.collectAsStateWithLifecycle()
   val availableSkins by viewModel.availableSkins.collectAsStateWithLifecycle()
   val activeSkin by viewModel.activeSkin.collectAsStateWithLifecycle()
   val skinSettings by viewModel.skinSettings.collectAsStateWithLifecycle()
   val skinRecoveryNotice by viewModel.skinRecoveryNotice.collectAsStateWithLifecycle()
+  val playbackRecoveryNotice by viewModel.playbackRecoveryNotice.collectAsStateWithLifecycle()
+  val userEqPresets by viewModel.userEqPresets.collectAsStateWithLifecycle()
+  val userAutoEqRules by viewModel.userAutoEqRules.collectAsStateWithLifecycle()
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
   var pendingM3u8Export by remember { mutableStateOf<Pair<String, String>?>(null) }
+  var pendingBinaryExport by remember { mutableStateOf<Pair<String, ByteArray>?>(null) }
+  var pendingImportSlot by remember { mutableStateOf(ImportSlot.SKIN_WSZ) }
+  var pendingRegrantFolderUri by remember { mutableStateOf<String?>(null) }
 
   val importSkinLauncher =
     if (hasActivityResultOwner) {
@@ -105,9 +132,73 @@ fun DroidAmpRackScreen(
       null
     }
 
+  val importDocLauncher =
+    if (hasActivityResultOwner) {
+      rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val targetSlot = pendingImportSlot
+        if (uri != null) {
+          scope.launch(Dispatchers.IO) {
+            val bytes =
+              runCatching {
+                context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+              }.getOrNull()
+            val resolvedName =
+              runCatching {
+                var display: String? = null
+                context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                  ?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                      val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                      if (idx >= 0) display = cursor.getString(idx)
+                    }
+                  }
+                display?.takeIf { it.isNotBlank() }
+              }.getOrNull()
+                ?: uri.lastPathSegment?.substringAfterLast('/')?.ifBlank { "imported_file" }
+                ?: "imported_file"
+            withContext(Dispatchers.Main) {
+              if (bytes != null) {
+                viewModel.importFileForSlot(
+                  slot = targetSlot,
+                  fileName = resolvedName,
+                  rawBytes = bytes,
+                  uriString = uri.toString(),
+                )
+              }
+            }
+          }
+        }
+      }
+    } else {
+      null
+    }
+
+  val exportBinaryDocLauncher =
+    if (hasActivityResultOwner) {
+      rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
+        val pending = pendingBinaryExport
+        pendingBinaryExport = null
+        if (uri != null && pending != null) {
+          val (_, bytes) = pending
+          scope.launch(Dispatchers.IO) {
+            runCatching {
+              context.contentResolver.openOutputStream(uri)?.use { out ->
+                out.write(bytes)
+                out.flush()
+              }
+            }
+          }
+        }
+      }
+    } else {
+      null
+    }
+
   val safPickerLauncher =
     if (hasActivityResultOwner) {
       rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        val regrantTarget = pendingRegrantFolderUri
+        pendingRegrantFolderUri = null
         if (uri != null) {
           val rwFlags =
             Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
@@ -123,7 +214,11 @@ fun DroidAmpRackScreen(
               )
             }
           }
-          viewModel.onSelectMusicFolder(uri.toString())
+          if (regrantTarget != null) {
+            viewModel.regrantSafRoot(regrantTarget, uri.toString())
+          } else {
+            viewModel.onSelectMusicFolder(uri.toString())
+          }
         }
       }
     } else {
@@ -168,39 +263,164 @@ fun DroidAmpRackScreen(
       null
     }
 
+  val triggerAddSafFolder: () -> Unit = {
+    pendingRegrantFolderUri = null
+    if (onRequestSafFolderPicker != null) {
+      onRequestSafFolderPicker()
+    } else if (hasActivityResultOwner && safPickerLauncher != null) {
+      safPickerLauncher.launch(null)
+    } else {
+      viewModel.onSelectMusicFolder()
+    }
+  }
+
+  val triggerRequestMediaStorePermission: () -> Unit = {
+    if (hasActivityResultOwner) {
+      val permission =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+          Manifest.permission.READ_MEDIA_AUDIO
+        } else {
+          Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+      val granted =
+        ContextCompat.checkSelfPermission(context, permission) ==
+          PackageManager.PERMISSION_GRANTED
+      if (granted) {
+        viewModel.onStoragePermissionResult(true)
+      } else {
+        mediaStorePermissionLauncher?.launch(permission)
+      }
+    }
+  }
+
   val triggerSelectMusicFolder: () -> Unit = {
     when {
       onRequestSafFolderPicker != null -> onRequestSafFolderPicker()
-      storageBackend == StorageBackend.MEDIA_STORE && hasActivityResultOwner -> {
-        val permission =
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Manifest.permission.READ_MEDIA_AUDIO
-          } else {
-            Manifest.permission.READ_EXTERNAL_STORAGE
-          }
-        val granted =
-          ContextCompat.checkSelfPermission(context, permission) ==
-            PackageManager.PERMISSION_GRANTED
-        if (granted) {
-          viewModel.onStoragePermissionResult(true)
-        } else {
-          mediaStorePermissionLauncher?.launch(permission)
-        }
-      }
-      hasActivityResultOwner && safPickerLauncher != null -> {
-        safPickerLauncher.launch(null)
-      }
-      else -> {
-        viewModel.onSelectMusicFolder()
-      }
+      storageBackend == StorageBackend.MEDIA_STORE && hasActivityResultOwner ->
+        triggerRequestMediaStorePermission()
+      else -> triggerAddSafFolder()
     }
   }
 
   val hasLinkedRoots = linkedRoots.isNotEmpty()
 
-  // ADR-020: Android Back steps up inside LIBRARY before panning back to the Deck + EQ
-  BackHandler(enabled = uiState.isSheetExpanded) {
-    viewModel.onBackPressedInExpandedSheet()
+  val renderSettingsHost: @Composable () -> Unit = {
+    SettingsHostScreen(
+      route = uiState.settingsRoute,
+      appPreferences = appPreferences,
+      dspSettings = dspSettings,
+      storageBackend = storageBackend,
+      managedSafFolders = managedSafFolders,
+      scanState = libraryScanState,
+      availableSkins = availableSkins,
+      activeSkinId = activeSkin.id,
+      activeSkinName = availableSkins.firstOrNull { it.id == activeSkin.id }?.displayName ?: activeSkin.displayName,
+      skinSettings = skinSettings,
+      userPresetCount = userEqPresets.size,
+      autoEqRuleCount = userAutoEqRules.size,
+      activeEqPresetName = playbackState.equalizer.activePresetName,
+      userEqPresets = userEqPresets,
+      autoEqRules = userAutoEqRules,
+      currentTrack = playbackState.currentTrack,
+      pendingMigrationDialog = uiState.pendingMigrationDialog,
+      onNavigate = viewModel::navigateSettings,
+      onBack = viewModel::navigateBackInSettings,
+      onUpdatePreferences = viewModel::updateAppPreferences,
+      onSelectMusicSource = viewModel::selectMusicSource,
+      onAddMusicFolder = triggerAddSafFolder,
+      onRegrantFolder = { folder ->
+        pendingRegrantFolderUri = folder.uriString
+        if (hasActivityResultOwner && safPickerLauncher != null) {
+          safPickerLauncher.launch(null)
+        } else {
+          viewModel.regrantSafRoot(folder.uriString, folder.uriString)
+        }
+      },
+      onRemoveFolder = { folder -> viewModel.removeSafRoot(folder.uriString) },
+      onRetryAudioPermission = triggerRequestMediaStorePermission,
+      onOpenAppPermissionSettings = {
+        runCatching {
+          val intent =
+            Intent(
+              Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+              Uri.fromParts("package", context.packageName, null),
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          context.startActivity(intent)
+        }
+      },
+      onRescanLibrary = viewModel::rescanMusicLibrary,
+      onSetTrackTransitionMode = viewModel::setTrackTransitionMode,
+      onSetCrossfadeDurationSec = viewModel::setCrossfadeDurationSec,
+      onSetReplayGainMode = viewModel::setReplayGainMode,
+      onSetReplayGainPreampDb = viewModel::setReplayGainPreampDb,
+      onApplyEqPreset = viewModel::applyEqPreset,
+      onResetEqFlat = viewModel::resetEqToFlat,
+      onImportEqfClick = {
+        pendingImportSlot = ImportSlot.EQ_PRESET_EQF
+        importDocLauncher?.launch(arrayOf("*/*"))
+      },
+      onExportEqfClick = {
+        val baseName =
+          playbackState.equalizer.activePresetName
+            .ifBlank { "droidamp_eq" }
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val suggested = "$baseName.eqf"
+        pendingBinaryExport = suggested to viewModel.encodeCurrentEqAsEqfBytes()
+        exportBinaryDocLauncher?.launch(suggested)
+      },
+      onSaveAutoEqForTrack = viewModel::saveAutoEqRuleForTrack,
+      onSaveAutoEqForFolder = viewModel::saveAutoEqRuleForFolder,
+      onDeleteUserEqPreset = viewModel::deleteUserEqPreset,
+      onDeleteUserAutoEqRule = viewModel::deleteUserAutoEqRule,
+      onSelectSkin = viewModel::selectSkin,
+      onImportSkinClick = {
+        pendingImportSlot = ImportSlot.SKIN_WSZ
+        importSkinLauncher?.launch(arrayOf("*/*"))
+      },
+      onDeleteImportedSkin = viewModel::deleteImportedSkin,
+      onSetLegacyRenderMode = viewModel::setLegacySkinRenderMode,
+      onSetAutoContrastGuard = viewModel::setAutoContrastGuard,
+      onImportIniClick = {
+        pendingImportSlot = ImportSlot.MIGRATION_INI
+        importDocLauncher?.launch(arrayOf("*/*"))
+      },
+      onExportIniClick = {
+        val fileName = "winamp.ini"
+        pendingBinaryExport =
+          fileName to viewModel.exportWinampIniText().toByteArray(Charsets.UTF_8)
+        exportBinaryDocLauncher?.launch(fileName)
+      },
+      onImportQ1Click = {
+        pendingImportSlot = ImportSlot.MIGRATION_Q1
+        importDocLauncher?.launch(arrayOf("*/*"))
+      },
+      onExportQ1Click = {
+        val fileName = "winamp.q1"
+        pendingBinaryExport = fileName to viewModel.exportWinampQ1Bytes()
+        exportBinaryDocLauncher?.launch(fileName)
+      },
+      onImportQ2Click = {
+        pendingImportSlot = ImportSlot.MIGRATION_Q2
+        importDocLauncher?.launch(arrayOf("*/*"))
+      },
+      onExportQ2Click = {
+        val fileName = "winamp.q2"
+        pendingBinaryExport = fileName to viewModel.exportWinampQ2Bytes()
+        exportBinaryDocLauncher?.launch(fileName)
+      },
+      onConfirmIniImport = viewModel::confirmIniMigration,
+      onConfirmQ1Import = viewModel::confirmQ1Migration,
+      onConfirmQ2Import = viewModel::confirmQ2Migration,
+      onDismissMigrationDialog = viewModel::dismissMigrationDialog,
+      onResetAllSettings = viewModel::resetAllSettingsToDefaults,
+    )
+  }
+
+  BackHandler(enabled = uiState.isSettingsOpen || uiState.isSheetExpanded) {
+    when {
+      uiState.isSettingsOpen -> viewModel.navigateBackInSettings()
+      else -> viewModel.onBackPressedInExpandedSheet()
+    }
   }
 
   val isDarkSystemTheme = isSystemInDarkTheme()
@@ -223,6 +443,23 @@ fun DroidAmpRackScreen(
       val maxPanPx =
         (instrumentHeightPx - statusBarTopPx).coerceIn(1f, (fullHeightPx - minBrowserHeightPx).coerceAtLeast(1f))
 
+      val haptics = LocalHapticFeedback.current
+      val settingsBumpPx = with(density) { 160.dp.toPx() }
+      var settingsPullRawPx by remember { mutableFloatStateOf(0f) }
+
+      LaunchedEffect(uiState.isSettingsOpen) {
+        if (!uiState.isSettingsOpen) {
+          settingsPullRawPx = 0f
+        }
+      }
+
+      val isPullingPastSettingsBump = uiState.isSettingsOpen && settingsPullRawPx >= settingsBumpPx
+      LaunchedEffect(isPullingPastSettingsBump) {
+        if (isPullingPastSettingsBump && appPreferences.hapticFeedbackEnabled) {
+          haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
+      }
+
       // Stereo-Tower Camera Pan offset:
       // 0f        = Resting (Main Deck + EQ + live Queue/Library below)
       // maxPanPx  = Expanded (Main Deck + EQ smoothly panned up behind status bar scrim)
@@ -239,7 +476,20 @@ fun DroidAmpRackScreen(
       // Drag delta is screen-space Y (negative = dragging finger UP -> increases panOffsetPx)
       val onStereoPanDelta: (Float) -> Unit = { dragDeltaY ->
         scope.launch {
-          val next = (panOffsetPx.value - dragDeltaY).coerceIn(0f, maxPanPx)
+          val effectiveDelta =
+            if (uiState.isSettingsOpen) {
+              val prevRaw = settingsPullRawPx
+              val nextRaw = (prevRaw + dragDeltaY).coerceAtLeast(0f)
+              settingsPullRawPx = nextRaw
+              if (nextRaw < settingsBumpPx && prevRaw < settingsBumpPx) {
+                dragDeltaY * 0.22f
+              } else {
+                dragDeltaY
+              }
+            } else {
+              dragDeltaY
+            }
+          val next = (panOffsetPx.value - effectiveDelta).coerceIn(0f, maxPanPx)
           panOffsetPx.snapTo(next)
         }
       }
@@ -247,7 +497,11 @@ fun DroidAmpRackScreen(
       val onStereoPanFinished: (Float) -> Unit = { totalDragY ->
         val progress = (panOffsetPx.value / maxPanPx).coerceIn(0f, 1f)
         val shouldExpand =
-          if (uiState.isSheetExpanded) {
+          if (uiState.isSettingsOpen) {
+            val crossedBump = settingsPullRawPx >= settingsBumpPx || totalDragY >= settingsBumpPx
+            settingsPullRawPx = 0f
+            !crossedBump
+          } else if (uiState.isSheetExpanded) {
             !(progress < 0.82f || totalDragY > 80f)
           } else {
             progress > 0.18f || totalDragY < -64f
@@ -309,6 +563,10 @@ fun DroidAmpRackScreen(
           enter = expandVertically(),
           exit = shrinkVertically(),
         ) {
+          val userPresetNames =
+            remember(userEqPresets) {
+              userEqPresets.map { it.name.trim().lowercase(Locale.ROOT) }.toSet()
+            }
           EqualizerPanel(
             eqState = playbackState.equalizer,
             onToggleEnabled = viewModel::toggleEqEnabled,
@@ -317,8 +575,13 @@ fun DroidAmpRackScreen(
             onBandChange = viewModel::setEqBandDb,
             onApplyPreset = viewModel::applyEqPreset,
             availablePresets = uiState.availableEqPresets,
+            userPresetNames = userPresetNames,
             autoEqStatusReadout = uiState.autoEqFeedbackMessage,
             sliderBankHeight = 132.dp,
+            onCheckPresetConflict = viewModel::checkEqPresetConflict,
+            onSavePreset = viewModel::saveCurrentEqCurveAsPreset,
+            onResetFlat = viewModel::resetEqToFlat,
+            onManagePresetsClick = viewModel::openEqPresetsSettings,
           )
         }
 
@@ -354,8 +617,6 @@ fun DroidAmpRackScreen(
           libraryViewLevel = uiState.libraryViewLevel,
           folderContents = uiState.folderContents,
           playlists = uiState.playlists,
-          availableSkins = availableSkins,
-          activeSkinId = activeSkin.id,
           selectedLibraryTrackIds = uiState.selectedLibraryTrackIds,
           selectedPlaylistId = uiState.selectedLibraryPlaylistId,
           libraryFeedbackBanner = uiState.libraryFeedbackBanner,
@@ -369,8 +630,8 @@ fun DroidAmpRackScreen(
           onSwitchSheetMode = viewModel::switchSheetMode,
           onPlaylistTrackClick = viewModel::onPlaylistTrackClick,
           onPlaylistTrackDoubleClick = viewModel::onPlaylistTrackDoubleClick,
-          onMoveTrackUp = { idx -> viewModel.movePlaylistTrack(idx, idx - 1) },
-          onMoveTrackDown = { idx -> viewModel.movePlaylistTrack(idx, idx + 1) },
+          onMoveTrackUp = { idx -> viewModel.movePlaylistTracksStep(idx, -1) },
+          onMoveTrackDown = { idx -> viewModel.movePlaylistTracksStep(idx, 1) },
           onJumpFilterChange = viewModel::onJumpFilterQueryChange,
           onToggleJumpFilter = viewModel::toggleJumpFilter,
           onOpenMicroMenu = viewModel::openMicroMenu,
@@ -389,9 +650,6 @@ fun DroidAmpRackScreen(
           onOpenLibraryRoot = viewModel::openLibraryRoot,
           onOpenLibraryFolders = viewModel::openLibraryFolders,
           onOpenLibraryPlaylists = viewModel::openLibraryPlaylists,
-          onOpenLibrarySkins = viewModel::openLibrarySkins,
-          onSelectSkin = viewModel::selectSkin,
-          onImportSkinClick = { importSkinLauncher?.launch(arrayOf("*/*")) },
           onNavigateUp = viewModel::navigateFolderUp,
           onOpenFolder = viewModel::openFolder,
           onPlayFolder = viewModel::playFolderAsPlaylist,
@@ -413,10 +671,13 @@ fun DroidAmpRackScreen(
           onStop = viewModel::stop,
           onNext = viewModel::next,
           onMoveTrack = viewModel::movePlaylistTrack,
-          skinSettings = skinSettings,
-          onSetLegacyRenderMode = viewModel::setLegacySkinRenderMode,
-          onSetAutoContrastGuard = viewModel::setAutoContrastGuard,
-          onDeleteImportedSkin = viewModel::deleteImportedSkin,
+          onMoveTracksStep = viewModel::movePlaylistTracksStep,
+          queueTapAction = appPreferences.queueTapAction,
+          hapticFeedbackEnabled = appPreferences.hapticFeedbackEnabled,
+          isSettingsOpen = uiState.isSettingsOpen,
+          isExitingSettingsArmed = isPullingPastSettingsBump,
+          onOpenSettings = viewModel::openSettings,
+          settingsContent = { renderSettingsHost() },
         )
       }
 
@@ -477,6 +738,15 @@ fun DroidAmpRackScreen(
           onUseRawOgColors = viewModel::useRawOgColorsForSkin,
           onResolveDuplicate = viewModel::resolveDuplicateSkinImport,
           onConfirmWrongSlotRedirect = viewModel::confirmWrongSlotRedirect,
+        )
+      }
+
+      val activePlaybackNotice = playbackRecoveryNotice
+      if (activePlaybackNotice is PlaybackRecoveryNotice.MissingTrackSkipped) {
+        PlaybackRecoveryDialog(
+          notice = activePlaybackNotice,
+          onRemoveMissingTrack = viewModel::removeMissingTrack,
+          onDismiss = viewModel::dismissPlaybackRecoveryNotice,
         )
       }
     }

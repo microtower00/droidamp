@@ -9,6 +9,7 @@ import androidx.media3.common.C
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.util.UnstableApi
 import com.droidamp.player.audio.dsp.ReplayGainMetadata
+import com.droidamp.player.domain.contract.PlaybackRecoveryNotice
 import com.droidamp.player.domain.model.AudioTrack
 import com.droidamp.player.domain.model.ChannelMode
 import com.droidamp.player.domain.model.ClassicWinampPresets
@@ -22,6 +23,7 @@ import com.droidamp.player.domain.model.ReplayGainMode
 import com.droidamp.player.domain.model.VisualizerFrame
 import com.droidamp.player.domain.model.VisualizerMode
 import com.droidamp.player.domain.model.WinampEqSpec
+import com.droidamp.player.storage.VolumeKeyMode
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +40,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -77,6 +80,8 @@ class Media3AudioEngineControllerTest {
     var syncQueueCount = 0
     var selectTrackCount = 0
     var seekToCount = 0
+    var handleAudioBecomingNoisyEnabled = true
+    var lastLowLatencyAudioBuffer: Boolean? = null
 
     override fun setListener(listener: AudioEngineGateway.Listener?) {
       this.gatewayListener = listener
@@ -189,6 +194,46 @@ class Media3AudioEngineControllerTest {
 
     override fun cancelCrossfade() {
       cancelCrossfadeCount++
+    }
+
+    override fun setHandleAudioBecomingNoisy(enabled: Boolean) {
+      handleAudioBecomingNoisyEnabled = enabled
+    }
+
+    override fun setLowLatencyAudioBuffer(enabled: Boolean) {
+      lastLowLatencyAudioBuffer = enabled
+    }
+  }
+
+  private class FakeSystemAudioBridge(
+    override val supportsSystemVolumeSync: Boolean = true,
+    initialStreamVolume: Int = 180,
+  ) : SystemAudioBridge {
+    var streamVolume: Int = initialStreamVolume
+    val setStreamCalls = mutableListOf<Int>()
+    var volumeListener: ((Int) -> Unit)? = null
+    var routeListener: SystemAudioBridge.OutputRouteListener? = null
+
+    override fun getStreamVolume0To255(): Int = streamVolume
+
+    override fun setStreamVolume0To255(volume0To255: Int) {
+      streamVolume = volume0To255.coerceIn(PlaybackState.MIN_VOLUME, PlaybackState.MAX_VOLUME)
+      setStreamCalls += streamVolume
+    }
+
+    override fun setVolumeChangeListener(listener: ((Int) -> Unit)?) {
+      volumeListener = listener
+    }
+
+    override fun setOutputRouteListener(listener: SystemAudioBridge.OutputRouteListener?) {
+      routeListener = listener
+    }
+
+    override fun release() = Unit
+
+    fun emitExternalVolumeChange(volume0To255: Int) {
+      streamVolume = volume0To255.coerceIn(PlaybackState.MIN_VOLUME, PlaybackState.MAX_VOLUME)
+      volumeListener?.invoke(streamVolume)
     }
   }
 
@@ -630,6 +675,348 @@ class Media3AudioEngineControllerTest {
     assertEquals(0L, controller.playbackState.value.positionMs)
     assertEquals(0, gateway.seekToCount)
     assertEquals(0, gateway.cancelCrossfadeCount)
+
+    controller.close()
+  }
+
+  @Test
+  fun volumeKeyMode_syncSystem_keepsPcmUnityAndBidirectionallyMirrorsWithEchoGuard() = runTest {
+    val store = createPreferencesStore(File(tempFolder.root, "sync_system.preferences_pb"), backgroundScope)
+    val gateway = FakeAudioEngineGateway()
+    val bridge = FakeSystemAudioBridge(supportsSystemVolumeSync = true, initialStreamVolume = 175)
+    var nowMs = 1_000L
+    val controller =
+      Media3AudioEngineController(
+        gateway = gateway,
+        preferencesStore = store,
+        scope = backgroundScope,
+        systemAudioBridge = bridge,
+        nowMsProvider = { nowMs },
+      )
+    advanceUntilIdle()
+
+    // SYNC_SYSTEM starts mirrored to stream volume while keeping PCM DSP at unity (255).
+    assertEquals(175, controller.playbackState.value.volume)
+    assertEquals(PlaybackState.MAX_VOLUME, gateway.lastAppliedVolume)
+
+    // Slider move writes to system stream while leaving PCM DSP at unity.
+    controller.setVolume(140)
+    assertEquals(140, controller.playbackState.value.volume)
+    assertEquals(listOf(140), bridge.setStreamCalls)
+    assertEquals(PlaybackState.MAX_VOLUME, gateway.lastAppliedVolume)
+
+    // External stream echo within 350ms window is ignored.
+    nowMs = 1_200L
+    bridge.emitExternalVolumeChange(90)
+    assertEquals(140, controller.playbackState.value.volume)
+
+    // External hardware key change after echo window updates deck slider without mutating PCM DSP.
+    nowMs = 1_500L
+    bridge.emitExternalVolumeChange(210)
+    assertEquals(210, controller.playbackState.value.volume)
+    assertEquals(PlaybackState.MAX_VOLUME, gateway.lastAppliedVolume)
+
+    controller.close()
+  }
+
+  @Test
+  fun volumeKeyMode_independentDeck_appliesPcmDspWithoutWritingSystemStream() = runTest {
+    val store = createPreferencesStore(File(tempFolder.root, "independent_deck.preferences_pb"), backgroundScope)
+    val gateway = FakeAudioEngineGateway()
+    val bridge = FakeSystemAudioBridge(supportsSystemVolumeSync = true, initialStreamVolume = 180)
+    val controller =
+      Media3AudioEngineController(
+        gateway = gateway,
+        preferencesStore = store,
+        scope = backgroundScope,
+        systemAudioBridge = bridge,
+      )
+    advanceUntilIdle()
+
+    controller.setVolumeKeyMode(VolumeKeyMode.INDEPENDENT_DECK)
+    controller.setVolume(77)
+
+    assertEquals(77, controller.playbackState.value.volume)
+    assertEquals(77, gateway.lastAppliedVolume)
+    assertTrue(bridge.setStreamCalls.isEmpty())
+
+    // External system volume changes must not override INDEPENDENT_DECK slider.
+    bridge.emitExternalVolumeChange(250)
+    assertEquals(77, controller.playbackState.value.volume)
+
+    controller.close()
+  }
+
+  @Test
+  fun outputRouteDisconnectAndReconnect_respectsPauseAndAutoResumeToggles() = runTest {
+    val store = createPreferencesStore(File(tempFolder.root, "route_recovery.preferences_pb"), backgroundScope)
+    val gateway = FakeAudioEngineGateway()
+    val bridge = FakeSystemAudioBridge()
+    val controller =
+      Media3AudioEngineController(
+        gateway = gateway,
+        preferencesStore = store,
+        scope = backgroundScope,
+        systemAudioBridge = bridge,
+      )
+    advanceUntilIdle()
+
+    controller.replaceQueue(listOf(track("t0"), track("t1")), startIndex = 0, autoPlay = true)
+    assertEquals(PlaybackStatus.PLAYING, controller.playbackState.value.status)
+
+    // Default pauseOnDisconnect=true pauses playback; autoResumeOnReconnect=false keeps it paused.
+    bridge.routeListener?.onAudioBecomingNoisy()
+    assertEquals(PlaybackStatus.PAUSED, controller.playbackState.value.status)
+    bridge.routeListener?.onExternalOutputConnected()
+    assertEquals(PlaybackStatus.PAUSED, controller.playbackState.value.status)
+
+    // Enabling autoResumeOnReconnect resumes playback only if paused by disconnect.
+    controller.setAutoResumeOnReconnect(true)
+    controller.play()
+    assertEquals(PlaybackStatus.PLAYING, controller.playbackState.value.status)
+    bridge.routeListener?.onAudioBecomingNoisy()
+    assertEquals(PlaybackStatus.PAUSED, controller.playbackState.value.status)
+    bridge.routeListener?.onExternalOutputConnected()
+    assertEquals(PlaybackStatus.PLAYING, controller.playbackState.value.status)
+
+    // Disabling pauseOnDisconnect forwards flag to gateway and leaves playback playing.
+    controller.setPauseOnDisconnect(false)
+    assertFalse(gateway.handleAudioBecomingNoisyEnabled)
+    bridge.routeListener?.onAudioBecomingNoisy()
+    assertEquals(PlaybackStatus.PLAYING, controller.playbackState.value.status)
+
+    controller.close()
+  }
+
+  @Test
+  fun onTrackPlaybackError_autoSkipsEmitsNoticeAndStopsOnConsecutiveErrorLoopGuard() = runTest {
+    val store = createPreferencesStore(File(tempFolder.root, "playback_error.preferences_pb"), backgroundScope)
+    val gateway = FakeAudioEngineGateway()
+    val controller = Media3AudioEngineController(gateway, store, backgroundScope)
+    advanceUntilIdle()
+
+    val t0 = track("t0")
+    val t1 = track("t1")
+    controller.replaceQueue(listOf(t0, t1), startIndex = 0, autoPlay = true)
+    assertNull(controller.playbackRecoveryNotice.value)
+
+    // First broken track skips to next track and emits actionable notice.
+    gateway.gatewayListener?.onTrackPlaybackError(0, t0, "FILE NOT FOUND")
+    assertEquals(1, controller.playbackState.value.currentIndex)
+    assertEquals(PlaybackStatus.PLAYING, controller.playbackState.value.status)
+    assertEquals(1, gateway.selectTrackCount)
+    assertEquals(
+      PlaybackRecoveryNotice.MissingTrackSkipped(
+        track = t0,
+        reason = "FILE NOT FOUND",
+        autoSkippedToNext = true,
+      ),
+      controller.playbackRecoveryNotice.value,
+    )
+
+    // Second consecutive broken track hits loop guard and stops cleanly instead of spinning forever.
+    gateway.gatewayListener?.onTrackPlaybackError(1, t1, "PERMISSION REVOKED")
+    assertEquals(PlaybackStatus.STOPPED, controller.playbackState.value.status)
+    assertEquals(
+      PlaybackRecoveryNotice.MissingTrackSkipped(
+        track = t1,
+        reason = "PERMISSION REVOKED",
+        autoSkippedToNext = false,
+      ),
+      controller.playbackRecoveryNotice.value,
+    )
+
+    controller.dismissPlaybackRecoveryNotice()
+    assertNull(controller.playbackRecoveryNotice.value)
+
+    controller.close()
+  }
+
+  @Test
+  fun removeTrackByUri_removesBrokenTrackFromQueue() = runTest {
+    val store = createPreferencesStore(File(tempFolder.root, "remove_uri.preferences_pb"), backgroundScope)
+    val gateway = FakeAudioEngineGateway()
+    val controller = Media3AudioEngineController(gateway, store, backgroundScope)
+    advanceUntilIdle()
+
+    val t0 = track("t0")
+    val t1 = track("t1")
+    controller.replaceQueue(listOf(t0, t1), startIndex = 0, autoPlay = false)
+
+    controller.removeTrackByUri(t0.uriString)
+    assertEquals(listOf(t1), controller.playbackState.value.queue)
+    assertEquals(0, controller.playbackState.value.currentIndex)
+
+    controller.close()
+  }
+
+  @Test
+  fun outputRouteDisconnect_marksDisconnectPauseEvenWhenGatewayPausedSlightlyBeforeNoisyBroadcast() = runTest {
+    val store = createPreferencesStore(File(tempFolder.root, "noisy_race.preferences_pb"), backgroundScope)
+    val gateway = FakeAudioEngineGateway()
+    val bridge = FakeSystemAudioBridge()
+    var nowMs = 2_000L
+    val controller =
+      Media3AudioEngineController(
+        gateway = gateway,
+        preferencesStore = store,
+        scope = backgroundScope,
+        systemAudioBridge = bridge,
+        nowMsProvider = { nowMs },
+      )
+    advanceUntilIdle()
+
+    controller.setAutoResumeOnReconnect(true)
+    controller.replaceQueue(listOf(track("t0")), startIndex = 0, autoPlay = true)
+    assertEquals(PlaybackStatus.PLAYING, controller.playbackState.value.status)
+
+    // ExoPlayer's internal noisy handler paused slightly before AndroidSystemAudioBridge broadcast arrives.
+    gateway.gatewayListener?.onPlaybackStatusChanged(isPlaying = false, isEnded = false)
+    assertEquals(PlaybackStatus.PAUSED, controller.playbackState.value.status)
+
+    nowMs = 2_400L
+    bridge.routeListener?.onAudioBecomingNoisy()
+    bridge.routeListener?.onExternalOutputConnected()
+    assertEquals(PlaybackStatus.PLAYING, controller.playbackState.value.status)
+
+    controller.close()
+  }
+
+  @Test
+  fun deterministicShuffle_randomizesFirstTrackFromLibrary_stepsSequentially_andRestoresUnshuffledOrder() = runTest {
+    val tracks = (0 until 8).map { idx -> track("t$idx") }
+
+    // 1. Playing from library with shuffle ON randomizes track 0 across different RNG seeds
+    val observedFirstIds = mutableSetOf<String>()
+    for (seed in 1..4) {
+      val sStore = createPreferencesStore(File(tempFolder.root, "shuf_first_$seed.preferences_pb"), backgroundScope)
+      val sGateway = FakeAudioEngineGateway()
+      val sController =
+        Media3AudioEngineController(
+          gateway = sGateway,
+          preferencesStore = sStore,
+          scope = backgroundScope,
+          random = kotlin.random.Random(seed),
+        )
+      advanceUntilIdle()
+      sController.toggleShuffle()
+      sController.replaceQueue(tracks, startIndex = 0, autoPlay = true)
+      observedFirstIds += sController.playbackState.value.currentTrack!!.id
+      sController.close()
+    }
+    assertTrue("Expected randomized first song across seeds, got $observedFirstIds", observedFirstIds.size > 1)
+
+    // 2. Next & Previous walk deterministically forward/backward through the permuted queue
+    val store = createPreferencesStore(File(tempFolder.root, "shuf_det.preferences_pb"), backgroundScope)
+    val gateway = FakeAudioEngineGateway()
+    val controller =
+      Media3AudioEngineController(
+        gateway = gateway,
+        preferencesStore = store,
+        scope = backgroundScope,
+        random = kotlin.random.Random(42),
+      )
+    advanceUntilIdle()
+
+    controller.toggleShuffle()
+    controller.replaceQueue(tracks, startIndex = 0, autoPlay = true)
+
+    val shuffledOrder = controller.playbackState.value.queue.map { it.id }
+    assertEquals(tracks.map { it.id }.toSet(), shuffledOrder.toSet())
+    assertEquals(0, controller.playbackState.value.currentIndex)
+
+    for (expectedIdx in 1..shuffledOrder.lastIndex) {
+      controller.next()
+      assertEquals(expectedIdx, controller.playbackState.value.currentIndex)
+      assertEquals(shuffledOrder[expectedIdx], controller.playbackState.value.currentTrack?.id)
+    }
+
+    gateway.positionMs = 500L
+    for (expectedIdx in shuffledOrder.lastIndex - 1 downTo 2) {
+      controller.previous()
+      assertEquals(expectedIdx, controller.playbackState.value.currentIndex)
+      assertEquals(shuffledOrder[expectedIdx], controller.playbackState.value.currentTrack?.id)
+    }
+
+    // 3. Enqueue while shuffled keeps played/active prefix intact & appends randomized additions
+    val activeTrackId = controller.playbackState.value.currentTrack!!.id
+    val expectedPrefix = controller.playbackState.value.queue.take(3).map { it.id }
+    controller.enqueueTracks(listOf(track("t8"), track("t9")))
+    val afterEnqueueIds = controller.playbackState.value.queue.map { it.id }
+    assertEquals(expectedPrefix, afterEnqueueIds.take(3))
+    assertEquals(10, afterEnqueueIds.size)
+    assertEquals(activeTrackId, controller.playbackState.value.currentTrack?.id)
+
+    // 4. Toggling shuffle OFF restores original unshuffled order around the playing track
+    controller.toggleShuffle()
+    assertFalse(controller.playbackState.value.shuffle)
+    assertEquals(listOf("t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9"), controller.playbackState.value.queue.map { it.id })
+    assertEquals(activeTrackId, controller.playbackState.value.currentTrack?.id)
+
+    // 5. Toggling shuffle ON while playing anchors currentTrack at index 0 and shuffles remaining tracks
+    controller.toggleShuffle()
+    assertTrue(controller.playbackState.value.shuffle)
+    assertEquals(0, controller.playbackState.value.currentIndex)
+    assertEquals(activeTrackId, controller.playbackState.value.currentTrack?.id)
+    assertEquals(10, controller.playbackState.value.queue.size)
+
+    controller.close()
+  }
+
+  @Test
+  fun lowLatencyAudioBuffer_propagatesToGateway() = runTest {
+    val store = createPreferencesStore(File(tempFolder.root, "low_latency.preferences_pb"), backgroundScope)
+    val gateway = FakeAudioEngineGateway()
+    val controller = Media3AudioEngineController(gateway, store, backgroundScope)
+    advanceUntilIdle()
+
+    controller.setLowLatencyAudioBuffer(true)
+    assertEquals(true, gateway.lastLowLatencyAudioBuffer)
+
+    controller.setLowLatencyAudioBuffer(false)
+    assertEquals(false, gateway.lastLowLatencyAudioBuffer)
+
+    controller.close()
+  }
+
+  @Test
+  fun moveTracksBy_movesContiguousAndNonContiguousSelections_preservesCurrentIndexAndBounds() = runTest {
+    val store = createPreferencesStore(File(tempFolder.root, "move_multi.preferences_pb"), backgroundScope)
+    val gateway = FakeAudioEngineGateway()
+    val controller = Media3AudioEngineController(gateway, store, backgroundScope)
+    advanceUntilIdle()
+
+    val tracks = listOf(track("t0"), track("t1"), track("t2"), track("t3"))
+    controller.replaceQueue(tracks, startIndex = 1, autoPlay = true) // playing t1
+
+    // Move non-contiguous selection {0, 2} down by +1 -> [t1, t0, t3, t2], active t1 shifts 1 -> 0
+    controller.moveTracksBy(setOf(0, 2), delta = 1)
+    assertEquals(listOf("t1", "t0", "t3", "t2"), controller.playbackState.value.queue.map { it.id })
+    assertEquals(0, controller.playbackState.value.currentIndex)
+    assertEquals("t1", controller.playbackState.value.currentTrack?.id)
+    assertEquals(listOf("t1", "t0", "t3", "t2"), gateway.queue.map { it.id })
+
+    // Bottom boundary clamp: {1, 3} cannot move further down -> no-op
+    val syncBeforeNoOp = gateway.syncQueueCount
+    controller.moveTracksBy(setOf(1, 3), delta = 1)
+    assertEquals(listOf("t1", "t0", "t3", "t2"), controller.playbackState.value.queue.map { it.id })
+    assertEquals(syncBeforeNoOp, gateway.syncQueueCount)
+
+    // Move {1, 3} back up by -1 -> restores [t0, t1, t2, t3] and active index 1
+    controller.moveTracksBy(setOf(1, 3), delta = -1)
+    assertEquals(listOf("t0", "t1", "t2", "t3"), controller.playbackState.value.queue.map { it.id })
+    assertEquals(1, controller.playbackState.value.currentIndex)
+
+    // Top boundary clamp: {0, 2} cannot move further up -> no-op
+    val syncBeforeTopNoOp = gateway.syncQueueCount
+    controller.moveTracksBy(setOf(0, 2), delta = -1)
+    assertEquals(listOf("t0", "t1", "t2", "t3"), controller.playbackState.value.queue.map { it.id })
+    assertEquals(syncBeforeTopNoOp, gateway.syncQueueCount)
+
+    // Multi-step contiguous block move {0, 1} +2 -> [t2, t3, t0, t1], t1 at index 3
+    controller.moveTracksBy(setOf(0, 1), delta = 2)
+    assertEquals(listOf("t2", "t3", "t0", "t1"), controller.playbackState.value.queue.map { it.id })
+    assertEquals(3, controller.playbackState.value.currentIndex)
 
     controller.close()
   }

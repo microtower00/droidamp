@@ -11,6 +11,7 @@ import com.droidamp.player.domain.contract.PlaylistFileCodec
 import com.droidamp.player.domain.model.AudioTrack
 import com.droidamp.player.domain.model.FolderContents
 import com.droidamp.player.domain.model.FolderEntry
+import com.droidamp.player.domain.model.ManagedSafFolder
 import com.droidamp.player.domain.model.SavedPlaylistEntry
 import com.droidamp.player.domain.model.StorageBackend
 import com.droidamp.player.interop.WinampPlaylistCodec
@@ -321,6 +322,10 @@ class SafMusicSourceRepository(
   private val _linkedRoots = MutableStateFlow<List<FolderEntry>>(emptyList())
   override val linkedRoots: StateFlow<List<FolderEntry>> = _linkedRoots.asStateFlow()
 
+  private val _managedSafFolders = MutableStateFlow<List<ManagedSafFolder>>(emptyList())
+  override val managedSafFolders: StateFlow<List<ManagedSafFolder>> =
+    _managedSafFolders.asStateFlow()
+
   override suspend fun setStorageBackend(backend: StorageBackend) {
     // Switching is orchestrated by SwitchingMusicSourceRepository; SAF repository remains SAF.
   }
@@ -351,6 +356,46 @@ class SafMusicSourceRepository(
     }
   }
 
+  override suspend fun removeSafRoot(treeUriString: String) {
+    val trimmed = treeUriString.trim()
+    if (trimmed.isEmpty()) return
+    withContext(ioDispatcher) {
+      stateMutex.withLock {
+        ensureLoadedAndPruneLocked()
+        gateway.releasePersistablePermission(trimmed)
+        preferencesStore.removeSafRoot(trimmed)
+        reloadFromStoreLocked()
+      }
+    }
+  }
+
+  override suspend fun replaceSafRoot(
+    oldUriString: String,
+    newUriString: String,
+  ): Boolean {
+    val trimmedOld = oldUriString.trim()
+    val trimmedNew = newUriString.trim()
+    if (trimmedNew.isEmpty()) return false
+    return withContext(ioDispatcher) {
+      stateMutex.withLock {
+        ensureLoadedAndPruneLocked()
+        val granted = gateway.takePersistablePermission(trimmedNew)
+        if (!granted || !gateway.isTreeAccessible(trimmedNew)) {
+          return@withLock false
+        }
+        val rootNode = gateway.getTreeRootNode(trimmedNew) ?: return@withLock false
+        val displayName = rootNode.name.ifBlank { deriveFallbackName(trimmedNew) }
+        preferencesStore.addSafRoot(trimmedNew, displayName)
+        if (trimmedOld.isNotEmpty() && trimmedOld != trimmedNew) {
+          gateway.releasePersistablePermission(trimmedOld)
+          preferencesStore.removeSafRoot(trimmedOld)
+        }
+        reloadFromStoreLocked()
+        rootRecords.any { it.treeUriString == trimmedNew }
+      }
+    }
+  }
+
   override suspend fun unlinkAllRoots() {
     withContext(ioDispatcher) {
       stateMutex.withLock {
@@ -364,8 +409,96 @@ class SafMusicSourceRepository(
         preferencesStore.clearSafRoots()
         rootRecords = emptyList()
         _linkedRoots.value = emptyList()
+        _managedSafFolders.value = emptyList()
       }
     }
+  }
+
+  override suspend fun rescanLibrary(): Int =
+    withContext(ioDispatcher) {
+      val roots =
+        stateMutex.withLock {
+          reloadFromStoreLocked()
+          rootRecords
+        }
+      if (roots.isEmpty()) return@withContext 0
+      val (tracks, _) = scanAllRoots(roots)
+      tracks.size
+    }
+
+  internal suspend fun collectIndexTracks(
+    existingByUri: Map<String, AudioTrack>,
+  ): List<AudioTrack> =
+    withContext(ioDispatcher) {
+      val roots =
+        stateMutex.withLock {
+          ensureLoadedAndPruneLocked()
+          rootRecords
+        }
+      if (roots.isEmpty()) return@withContext emptyList()
+      val out = ArrayList<AudioTrack>()
+      val visitedDirs = HashSet<String>()
+      for (root in roots) {
+        if (!gateway.isTreeAccessible(root.treeUriString)) continue
+        collectLightIndexTracksRecursive(
+          root = root,
+          directoryDocUriString = root.rootDocUriString,
+          pathSegments = listOf(root.displayName),
+          depth = 0,
+          visitedDirs = visitedDirs,
+          existingByUri = existingByUri,
+          out = out,
+        )
+      }
+      out
+    }
+
+  private fun collectLightIndexTracksRecursive(
+    root: LinkedRootRecord,
+    directoryDocUriString: String,
+    pathSegments: List<String>,
+    depth: Int,
+    visitedDirs: MutableSet<String>,
+    existingByUri: Map<String, AudioTrack>,
+    out: MutableList<AudioTrack>,
+  ) {
+    if (!visitedDirs.add(directoryDocUriString)) return
+    val children = gateway.listChildren(root.treeUriString, directoryDocUriString) ?: return
+    val folderPath = pathSegments.joinToString("/")
+    children
+      .filter { !it.isDirectory && StorageSupportedFormats.isAudioFile(it.name, it.mimeType) }
+      .sortedBy { it.name.lowercase(Locale.ROOT) }
+      .forEach { fileNode ->
+        val cached = existingByUri[fileNode.uriString]
+        val track =
+          cached?.copy(
+            id = "saf:${fileNode.uriString}",
+            fileName = fileNode.name,
+            folderPath = folderPath,
+          ) ?: AudioMetadataExtractor.buildTrackFromMetadata(
+            id = "saf:${fileNode.uriString}",
+            uriString = fileNode.uriString,
+            fileName = fileNode.name,
+            folderPath = folderPath,
+            probed = null,
+          )
+        out.add(track)
+      }
+    if (depth >= maxTraversalDepth) return
+    children
+      .filter { it.isDirectory }
+      .sortedBy { it.name.lowercase(Locale.ROOT) }
+      .forEach { subdir ->
+        collectLightIndexTracksRecursive(
+          root = root,
+          directoryDocUriString = subdir.uriString,
+          pathSegments = pathSegments + subdir.name,
+          depth = depth + 1,
+          visitedDirs = visitedDirs,
+          existingByUri = existingByUri,
+          out = out,
+        )
+      }
   }
 
   override suspend fun browseFolder(folderUriString: String?): FolderContents =
@@ -563,29 +696,43 @@ class SafMusicSourceRepository(
       loadedFromStore = true
       return
     }
-    val stillValid = rootRecords.filter { gateway.isTreeAccessible(it.treeUriString) }
-    if (stillValid.size != rootRecords.size) {
-      preferencesStore.retainSafRoots(stillValid.map { it.treeUriString }.toSet())
-      rootRecords = stillValid
-      _linkedRoots.value = stillValid.map { it.entry }
+    // Check live accessibility non-destructively: inaccessible roots stay persisted with
+    // isAccessible = false in managedSafFolders so Settings can offer [RE-GRANT] / [KEEP] / [REMOVE] (ADR-029).
+    val anyAccessibilityChanged =
+      rootRecords.any { !gateway.isTreeAccessible(it.treeUriString) } ||
+        _managedSafFolders.value.any { !it.isAccessible && gateway.isTreeAccessible(it.uriString) }
+    if (anyAccessibilityChanged) {
+      reloadFromStoreLocked()
     }
   }
 
   private suspend fun reloadFromStoreLocked() {
     val snapshot = preferencesStore.loadSnapshot()
     val validRecords = ArrayList<LinkedRootRecord>()
-    val validUris = LinkedHashSet<String>()
-    var prunedAny = false
+    val managedFolders = ArrayList<ManagedSafFolder>()
 
     for (persisted in snapshot.safRoots) {
       val treeUri = persisted.uriString
+      val fallbackName = persisted.displayName.takeIf { it.isNotBlank() } ?: deriveFallbackName(treeUri)
       if (!gateway.isTreeAccessible(treeUri)) {
-        prunedAny = true
+        managedFolders.add(
+          ManagedSafFolder(
+            uriString = treeUri,
+            displayName = fallbackName,
+            isAccessible = false,
+          ),
+        )
         continue
       }
       val rootNode = gateway.getTreeRootNode(treeUri)
       if (rootNode == null) {
-        prunedAny = true
+        managedFolders.add(
+          ManagedSafFolder(
+            uriString = treeUri,
+            displayName = fallbackName,
+            isAccessible = false,
+          ),
+        )
         continue
       }
       val displayName =
@@ -594,7 +741,13 @@ class SafMusicSourceRepository(
 
       val children = gateway.listChildren(treeUri, rootNode.uriString)
       if (children == null) {
-        prunedAny = true
+        managedFolders.add(
+          ManagedSafFolder(
+            uriString = treeUri,
+            displayName = displayName,
+            isAccessible = false,
+          ),
+        )
         continue
       }
       val audioCount = children.count { !it.isDirectory && StorageSupportedFormats.isAudioFile(it.name, it.mimeType) }
@@ -616,24 +769,25 @@ class SafMusicSourceRepository(
           entry = entry,
         ),
       )
-      validUris.add(treeUri)
+      managedFolders.add(
+        ManagedSafFolder(
+          uriString = treeUri,
+          displayName = displayName,
+          isAccessible = true,
+          trackCount = audioCount,
+          subfolderCount = subdirCount,
+        ),
+      )
     }
 
-    if (prunedAny) {
-      preferencesStore.retainSafRoots(validUris)
-    }
     rootRecords = validRecords
     _linkedRoots.value = validRecords.map { it.entry }
+    _managedSafFolders.value = managedFolders
   }
 
   private suspend fun pruneInaccessibleRoots() {
     stateMutex.withLock {
-      val stillValid = rootRecords.filter { gateway.isTreeAccessible(it.treeUriString) }
-      if (stillValid.size != rootRecords.size) {
-        preferencesStore.retainSafRoots(stillValid.map { it.treeUriString }.toSet())
-        rootRecords = stillValid
-        _linkedRoots.value = stillValid.map { it.entry }
-      }
+      reloadFromStoreLocked()
     }
   }
 

@@ -1238,9 +1238,22 @@ class Tier4WorkloadsAndDeviceTest {
       val vmState = mutableStateOf<DroidAmpViewModel?>(null)
       var driver: E2eRackDriver? = null
 
+      val classicOgPrefs =
+        com.droidamp.player.storage.InMemoryAppPreferencesRepository(
+          com.droidamp.player.storage.AppPreferences(
+            volumeKeyMode = com.droidamp.player.storage.VolumeKeyMode.INDEPENDENT_DECK,
+            startupVolumeMode = com.droidamp.player.storage.StartupVolumeMode.CLASSIC_80_PERCENT,
+          ),
+        )
+
       // Session 1: set volume=50 (19%) & balance=-127 (L100) via UI sliders while STOPPED
       buildMedia3ControllerSession(prefsFile).use { s1 ->
-        val vm1 = DroidAmpViewModel(s1.controller, FakeMusicSourceRepository(startLinked = true))
+        val vm1 =
+          DroidAmpViewModel(
+            s1.controller,
+            FakeMusicSourceRepository(startLinked = true),
+            appPreferencesRepository = classicOgPrefs,
+          )
         vmState.value = vm1
         composeRule.setContent {
           vmState.value?.let { currentVm ->
@@ -1296,7 +1309,12 @@ class Tier4WorkloadsAndDeviceTest {
             }
           }
         }
-        val vm2 = DroidAmpViewModel(s2.controller, FakeMusicSourceRepository(startLinked = true))
+        val vm2 =
+          DroidAmpViewModel(
+            s2.controller,
+            FakeMusicSourceRepository(startLinked = true),
+            appPreferencesRepository = classicOgPrefs,
+          )
         assertEquals(204, s2.controller.playbackState.value.volume)
         assertEquals(-127, s2.controller.playbackState.value.balance)
 
@@ -1322,11 +1340,21 @@ class Tier4WorkloadsAndDeviceTest {
         // PLAYING & PAUSED preservation of volume = 35
         s2.controller.replaceQueue(FakeMusicSourceRepository.DAFT_PUNK_TRACKS.take(1), 0, autoPlay = true)
         s2.controller.setVolume(35)
-        val vmPlaying = DroidAmpViewModel(s2.controller, FakeMusicSourceRepository(startLinked = true))
+        val vmPlaying =
+          DroidAmpViewModel(
+            s2.controller,
+            FakeMusicSourceRepository(startLinked = true),
+            appPreferencesRepository = classicOgPrefs,
+          )
         assertEquals(35, vmPlaying.playbackState.value.volume)
 
         s2.controller.pause()
-        val vmPaused = DroidAmpViewModel(s2.controller, FakeMusicSourceRepository(startLinked = true))
+        val vmPaused =
+          DroidAmpViewModel(
+            s2.controller,
+            FakeMusicSourceRepository(startLinked = true),
+            appPreferencesRepository = classicOgPrefs,
+          )
         assertEquals(35, vmPaused.playbackState.value.volume)
       }
     }

@@ -132,6 +132,11 @@ internal object WinampEqBinaryContainer {
     )
   }
 
+  internal fun parsePayloadOrNull(bytes: ByteArray, nameOffset: Int): WinampEqBinaryRecord? {
+    if (nameOffset < 0 || nameOffset + PAYLOAD_SIZE > bytes.size) return null
+    return runCatching { parsePayloadAt(bytes, nameOffset) }.getOrNull()
+  }
+
   private fun writeNullTerminatedUtf8(dest: ByteArray, offset: Int, text: String) {
     val utf8 = text.trim().toByteArray(Charsets.UTF_8)
     var length = utf8.size.coerceAtMost(MAX_NAME_BYTES)

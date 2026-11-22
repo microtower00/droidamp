@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import com.droidamp.player.domain.contract.PlaybackRecoveryNotice
 import com.droidamp.player.interop.DetectedWinampFormat
 import com.droidamp.player.skin.LocalDroidAmpSkin
 import com.droidamp.player.skin.SkinRecoveryNotice
@@ -50,7 +51,7 @@ fun SkinRecoveryDialog(
               headlineColor = skin.vfd.ledAmber,
               detail =
                 "Skin \"${notice.failedSkinName}\" did not finish loading on the previous launch. " +
-                  "DroidAmp reverted to the built-in rack to keep startup safe.",
+                  "DroidAmp reverted to DroidAmp Classic to keep startup safe.",
             ) {
               Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -148,7 +149,7 @@ fun SkinRecoveryDialog(
             val overflowCount = (notice.missingAssets.size - 4).coerceAtLeast(0)
             val missingSummary =
               when {
-                previewMissing.isEmpty() -> "Some optional assets fell back to vector chrome."
+                previewMissing.isEmpty() -> "Some optional assets fell back to default styling."
                 overflowCount > 0 -> "Fallback assets: $previewMissing (+$overflowCount more)."
                 else -> "Fallback assets: $previewMissing."
               }
@@ -157,7 +158,7 @@ fun SkinRecoveryDialog(
               headline = "${notice.skinName.uppercase()} LOADED WITH FALLBACKS",
               headlineColor = skin.vfd.ledAmber,
               detail =
-                "Missing or unreadable skin entries were replaced with themed vector hardware chrome. $missingSummary",
+                "Missing or unreadable skin assets fell back to default styling. $missingSummary",
             ) {
               Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -181,7 +182,7 @@ fun SkinRecoveryDialog(
           is SkinRecoveryNotice.ContrastGuardApplied -> {
             ChassisTitleBar(title = "AUTO-CONTRAST GUARD")
             DialogBody(
-              headline = "ADJUSTED ${notice.adjustedTokenCount} LOW-CONTRAST TOKENS",
+              headline = "ADJUSTED ${notice.adjustedTokenCount} LOW-CONTRAST COLORS",
               headlineColor = skin.vfd.phosphorBright,
               detail =
                 "DroidAmp nudged ${notice.adjustedTokenCount} palette colors in \"${notice.skinName}\" " +
@@ -307,7 +308,7 @@ private fun wrongSlotRedirectSpec(
         detail =
           "This file contains a multi-preset Winamp Equalizer library (winamp.q1) rather than a .wsz skin. " +
             "Import all presets into your Equalizer?",
-        actionLabel = "LOAD .Q1",
+        actionLabel = "IMPORT .Q1",
         canRedirect = true,
       )
 
@@ -317,8 +318,8 @@ private fun wrongSlotRedirectSpec(
         headline = "${notice.fileName.uppercase()} IS A WINAMP .Q2 TABLE",
         detail =
           "This file contains Winamp Auto-EQ track/folder rules (winamp.q2) rather than a .wsz skin. " +
-            "Load these Auto-EQ rules now?",
-        actionLabel = "LOAD .Q2",
+            "Import these Auto-EQ rules now?",
+        actionLabel = "IMPORT .Q2",
         canRedirect = true,
       )
 
@@ -336,7 +337,7 @@ private fun wrongSlotRedirectSpec(
     DetectedWinampFormat.PlaylistM3u ->
       WrongSlotRedirectSpec(
         title = "PLAYLIST DETECTED (.M3U)",
-        headline = "${notice.fileName.uppercase()} IS AN M3U PLAYLIST",
+        headline = "${notice.fileName.uppercase()} IS A .M3U PLAYLIST",
         detail =
           "This file is an M3U/M3U8 track playlist rather than a .wsz skin. " +
             "Match tracks from your linked music library and load Queue?",
@@ -347,7 +348,7 @@ private fun wrongSlotRedirectSpec(
     DetectedWinampFormat.PlaylistPls ->
       WrongSlotRedirectSpec(
         title = "PLAYLIST DETECTED (.PLS)",
-        headline = "${notice.fileName.uppercase()} IS A PLS PLAYLIST",
+        headline = "${notice.fileName.uppercase()} IS A .PLS PLAYLIST",
         detail =
           "This file is a Winamp .pls playlist rather than a .wsz skin. " +
             "Match tracks from your linked music library and load Queue?",
@@ -366,10 +367,58 @@ private fun wrongSlotRedirectSpec(
 
     is DetectedWinampFormat.WszSkin ->
       WrongSlotRedirectSpec(
-        title = "SKIN ARCHIVE DETECTED",
-        headline = notice.fileName.uppercase(),
-        detail = "Select this archive from the .wsz skin importer.",
-        actionLabel = "DISMISS",
-        canRedirect = false,
+        title = "SKIN ARCHIVE DETECTED (.WSZ)",
+        headline = "${notice.fileName.uppercase()} IS A .WSZ SKIN",
+        detail =
+          "This archive contains a ${if (format.isAugmented) "DroidAmp Augmented" else "Winamp"} skin rather than the requested file type. " +
+            "Import and apply this skin now?",
+        actionLabel = "IMPORT .WSZ",
+        canRedirect = true,
       )
   }
+
+@Composable
+fun PlaybackRecoveryDialog(
+  notice: PlaybackRecoveryNotice.MissingTrackSkipped,
+  onRemoveMissingTrack: (String) -> Unit,
+  onDismiss: () -> Unit,
+) {
+  val skin = LocalDroidAmpSkin.current
+  Dialog(onDismissRequest = onDismiss) {
+    HardwarePanel(modifier = Modifier.fillMaxWidth()) {
+      Column(modifier = Modifier.fillMaxWidth()) {
+        ChassisTitleBar(title = "UNREADABLE TRACK SKIPPED")
+        DialogBody(
+          headline = "MISSING OR UNREADABLE FILE",
+          headlineColor = skin.vfd.ledAmber,
+          detail =
+            buildString {
+              append("Unable to play \"${notice.track.displayLabel}\" (${notice.reason}). ")
+              if (notice.autoSkippedToNext) {
+                append("Skipped to next playable track. Remove this track from your queue, or keep it if storage is temporarily disconnected?")
+              } else {
+                append("Remove this missing track from your queue, or keep it for later?")
+              }
+            },
+        ) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+          ) {
+            BeveledButton(
+              label = "REMOVE MISSING",
+              onClick = { onRemoveMissingTrack(notice.track.uriString) },
+              modifier = Modifier.weight(1.2f).height(34.dp),
+            )
+            BeveledButton(
+              label = "KEEP",
+              onClick = onDismiss,
+              highlighted = true,
+              modifier = Modifier.weight(1f).height(34.dp),
+            )
+          }
+        }
+      }
+    }
+  }
+}

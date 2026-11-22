@@ -51,10 +51,11 @@ This log records the key product, UX, and engineering decisions made during the 
 
 ## ADR-007: Independent Internal DSP Volume with Cold-Launch-Only Reset
 - **Date**: 2026-11-20
-- **Status**: Accepted
+- **Status**: Accepted *(M6 defaults amended by ADR-029)*
 - **Decision**:
   - Keep the Winamp Volume slider (`0..255`) as independent internal DSP gain (separate from Android hardware media stream volume), alongside Balance (`-127..+127`).
   - Reset internal volume to a familiar default level (e.g., ~80%) **only on fresh cold launch when playback is stopped**, never when resuming an active playback session.
+  - **ADR-029 Amendment (M6)**: Default Settings use **Sync with System Volume** + **Remember Last Startup Volume** for casual First-Week Tuners, while preserving **Independent Deck Volume `[OG]`** and **Classic 80% Startup Volume `[OG]`** in Settings.
 - **Rationale**: Preserves desktop Winamp's independent gain mixer while preventing both the "forgotten quiet internal slider" trap on fresh open and accidental ear-blasts when returning to a quietly playing session.
 
 ## ADR-008: Mode-Specific Playlist & Library Views with Sheet Memory
