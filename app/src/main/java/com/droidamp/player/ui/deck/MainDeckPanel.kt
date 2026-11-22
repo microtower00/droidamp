@@ -1,5 +1,6 @@
 package com.droidamp.player.ui.deck
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,15 +11,21 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.droidamp.player.domain.model.ChannelMode
 import com.droidamp.player.domain.model.PlaybackState
@@ -27,6 +34,7 @@ import com.droidamp.player.domain.model.RepeatMode
 import com.droidamp.player.domain.model.VisualizerFrame
 import com.droidamp.player.domain.model.formatWinampDuration
 import com.droidamp.player.skin.LocalDroidAmpSkin
+import com.droidamp.player.skin.TransportIconType
 import com.droidamp.player.ui.components.BeveledIconButton
 import com.droidamp.player.ui.components.BeveledLedToggleButton
 import com.droidamp.player.ui.components.ChassisTitleBar
@@ -35,12 +43,13 @@ import com.droidamp.player.ui.components.HardwareText
 import com.droidamp.player.ui.components.HorizontalHardwareSlider
 import com.droidamp.player.ui.components.RecessedWell
 import com.droidamp.player.ui.components.ScrollingMarqueeText
+import com.droidamp.player.ui.components.SettingsGearButton
 import com.droidamp.player.ui.components.SevenSegmentClock
 import com.droidamp.player.ui.components.SliderTrackStyle
-import com.droidamp.player.ui.components.TransportIconType
 import com.droidamp.player.ui.components.VfdStatusGlyph
 import com.droidamp.player.ui.components.VfdVisualizerCanvas
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 @Composable
 fun MainDeckPanel(
@@ -116,6 +125,17 @@ fun MainDeckPanel(
   var transientMarqueeOverride by remember { mutableStateOf<String?>(null) }
   var isDraggingSeek by remember { mutableStateOf(false) }
   var seekPreviewNorm by remember { mutableStateOf(0f) }
+  var balanceResetPulse by remember { mutableIntStateOf(0) }
+
+  LaunchedEffect(balanceResetPulse) {
+    if (balanceResetPulse > 0) {
+      transientMarqueeOverride = "BALANCE: CENTER"
+      delay(700L)
+      if (transientMarqueeOverride == "BALANCE: CENTER") {
+        transientMarqueeOverride = null
+      }
+    }
+  }
 
   val track = playbackState.currentTrack
   val defaultMarquee =
@@ -123,7 +143,7 @@ fun MainDeckPanel(
       val idx = (playbackState.currentIndex + 1).coerceAtLeast(1)
       "$idx. ${track.displayLabel} (${formatWinampDuration(track.durationMs)})  ***  "
     } else {
-      "DROIDAMP v0.1.0-alpha.1  —  NO TRACK LOADED  ***  "
+      "DROIDAMP  —  NO TRACK LOADED  ***  "
     }
 
   val durationMs = playbackState.durationMs.coerceAtLeast(1L)
@@ -140,7 +160,10 @@ fun MainDeckPanel(
 
   HardwarePanel(modifier = modifier.fillMaxWidth()) {
     Column(modifier = Modifier.fillMaxWidth()) {
-      ChassisTitleBar(title = "DROIDAMP")
+      ChassisTitleBar(
+        title = "DROIDAMP",
+        customSprite = skin.sprites.resolvedDeckHeader.takeIf { skin.sprites.hasCompletePanelHeaders },
+      )
 
       Column(
         modifier = Modifier.fillMaxWidth().padding(skin.metrics.panelPadding),
@@ -231,84 +254,109 @@ fun MainDeckPanel(
 
               Spacer(Modifier.weight(1f))
 
-              // MONO / STEREO indicators
+              // MONO / STEREO indicators (use monoster.bmp sprites when provided by .wsz skin)
               val isStereo = track?.channelMode == ChannelMode.STEREO
               val isMono = track?.channelMode == ChannelMode.MONO
-              HardwareText(
-                text = "MONO",
-                color = if (isMono) skin.vfd.phosphorPrimary else skin.chassis.labelMuted,
-              )
-              HardwareText(
-                text = "STEREO",
-                color = if (isStereo) skin.vfd.phosphorPrimary else skin.chassis.labelMuted,
-              )
-            }
-
-            // Mixer Row: Volume (0..255) + Balance (-127..+127) + EQ / PL toggles
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.spacedBy(6.dp),
-              verticalAlignment = Alignment.CenterVertically,
-            ) {
-              Column(modifier = Modifier.weight(1.35f)) {
-                Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                  HardwareText(text = "VOL")
-                  HardwareText(
-                    text = "${playbackState.volumePercent}%",
-                    color = skin.vfd.phosphorPrimary,
+              val monoSprite = if (isMono) skin.sprites.monoActive else skin.sprites.monoInactive
+              val stereoSprite = if (isStereo) skin.sprites.stereoActive else skin.sprites.stereoInactive
+              if (monoSprite != null && stereoSprite != null) {
+                Canvas(modifier = Modifier.width(34.dp).height(14.dp)) {
+                  drawImage(
+                    image = monoSprite,
+                    dstOffset = IntOffset.Zero,
+                    dstSize = IntSize(size.width.toInt().coerceAtLeast(1), size.height.toInt().coerceAtLeast(1)),
+                    filterQuality = FilterQuality.None,
                   )
                 }
-                HorizontalHardwareSlider(
-                  value = playbackState.volume / PlaybackState.MAX_VOLUME.toFloat(),
-                  onValueChange = { norm ->
-                    val vol = (norm * PlaybackState.MAX_VOLUME).roundToInt().coerceIn(0, 255)
-                    transientMarqueeOverride = "VOLUME: ${((vol / 255f) * 100f).roundToInt()}% ($vol/255)"
-                    onVolumeChange(vol)
-                  },
-                  onDragFinished = { transientMarqueeOverride = null },
-                  trackStyle = SliderTrackStyle.INTENSITY_RAMP,
-                  height = sliderHeight,
-                  thumbWidth = 16.dp,
-                )
-              }
-
-              Column(modifier = Modifier.weight(0.95f)) {
-                val balLabel =
-                  when {
-                    playbackState.balance == 0 -> "CTR"
-                    playbackState.balance < 0 -> "L${(-playbackState.balance * 100 / 127)}"
-                    else -> "R${(playbackState.balance * 100 / 127)}"
-                  }
-                Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                  HardwareText(text = "BAL")
-                  HardwareText(text = balLabel, color = skin.vfd.phosphorPrimary)
+                Canvas(modifier = Modifier.width(34.dp).height(14.dp)) {
+                  drawImage(
+                    image = stereoSprite,
+                    dstOffset = IntOffset.Zero,
+                    dstSize = IntSize(size.width.toInt().coerceAtLeast(1), size.height.toInt().coerceAtLeast(1)),
+                    filterQuality = FilterQuality.None,
+                  )
                 }
-                HorizontalHardwareSlider(
-                  value = (playbackState.balance - PlaybackState.MIN_BALANCE) / 254f,
-                  onValueChange = { norm ->
-                    val raw = (norm * 254f + PlaybackState.MIN_BALANCE).roundToInt()
-                    val snapped = if (raw in -8..8) 0 else raw.coerceIn(-127, 127)
-                    transientMarqueeOverride =
-                      when {
-                        snapped == 0 -> "BALANCE: CENTER"
-                        snapped < 0 -> "BALANCE: ${-snapped * 100 / 127}% LEFT"
-                        else -> "BALANCE: ${snapped * 100 / 127}% RIGHT"
-                      }
-                    onBalanceChange(snapped)
-                  },
-                  onDragFinished = { transientMarqueeOverride = null },
-                  trackStyle = SliderTrackStyle.CENTER_BALANCE,
-                  height = sliderHeight,
-                  thumbWidth = 14.dp,
+              } else {
+                HardwareText(
+                  text = "MONO",
+                  color = if (isMono) skin.vfd.phosphorPrimary else skin.chassis.labelMuted,
+                )
+                HardwareText(
+                  text = "STEREO",
+                  color = if (isStereo) skin.vfd.phosphorPrimary else skin.chassis.labelMuted,
                 )
               }
             }
+          }
+        }
+
+        // Row 2: Dedicated Full-Width Volume (60%) + Balance (40%) Row so sliders & .wsz sprites aren't squished
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Column(modifier = Modifier.weight(1.45f)) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              HardwareText(text = "VOL")
+              HardwareText(
+                text = "${playbackState.volumePercent}%",
+                color = skin.vfd.phosphorPrimary,
+              )
+            }
+            HorizontalHardwareSlider(
+              value = playbackState.volume / PlaybackState.MAX_VOLUME.toFloat(),
+              onValueChange = { norm ->
+                val vol = (norm * PlaybackState.MAX_VOLUME).roundToInt().coerceIn(0, 255)
+                transientMarqueeOverride = "VOLUME: ${((vol / 255f) * 100f).roundToInt()}%"
+                onVolumeChange(vol)
+              },
+              onDragFinished = { transientMarqueeOverride = null },
+              trackStyle = SliderTrackStyle.INTENSITY_RAMP,
+              height = sliderHeight,
+              thumbWidth = 16.dp,
+            )
+          }
+
+          Column(modifier = Modifier.weight(1.0f)) {
+            val balLabel =
+              when {
+                playbackState.balance == 0 -> "CTR"
+                playbackState.balance < 0 -> "L${(-playbackState.balance * 100 / 127)}"
+                else -> "R${(playbackState.balance * 100 / 127)}"
+              }
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              HardwareText(text = "BAL")
+              HardwareText(text = balLabel, color = skin.vfd.phosphorPrimary)
+            }
+            HorizontalHardwareSlider(
+              value = (playbackState.balance - PlaybackState.MIN_BALANCE) / 254f,
+              onValueChange = { norm ->
+                val raw = (norm * 254f + PlaybackState.MIN_BALANCE).roundToInt()
+                val snapped = if (raw in -8..8) 0 else raw.coerceIn(-127, 127)
+                transientMarqueeOverride =
+                  when {
+                    snapped == 0 -> "BALANCE: CENTER"
+                    snapped < 0 -> "BALANCE: ${-snapped * 100 / 127}% LEFT"
+                    else -> "BALANCE: ${snapped * 100 / 127}% RIGHT"
+                  }
+                onBalanceChange(snapped)
+              },
+              onDragFinished = { transientMarqueeOverride = null },
+              onDoubleTap = {
+                onBalanceChange(0)
+                balanceResetPulse++
+              },
+              trackStyle = SliderTrackStyle.CENTER_BALANCE,
+              height = sliderHeight,
+              thumbWidth = 14.dp,
+            )
           }
         }
 
@@ -379,7 +427,7 @@ fun MainDeckPanel(
           )
           BeveledIconButton(
             icon = TransportIconType.EJECT,
-            contentDescription = "Open Library",
+            contentDescription = "Open library",
             onClick = onEject,
             glyphSize = 15.dp,
             modifier = Modifier.weight(1f).height(transportHeight),
@@ -396,7 +444,9 @@ fun MainDeckPanel(
             checked = playbackState.shuffle,
             onClick = onToggleShuffle,
             compact = true,
-            modifier = Modifier.weight(1.2f).height(28.dp),
+            spriteOff = skin.sprites.shuffleOff,
+            spriteOn = skin.sprites.shuffleOn,
+            modifier = Modifier.weight(1.25f).height(28.dp),
           )
           val repeatLabel =
             when (playbackState.repeatMode) {
@@ -409,13 +459,17 @@ fun MainDeckPanel(
             checked = playbackState.repeatMode != RepeatMode.OFF,
             onClick = onCycleRepeat,
             compact = true,
-            modifier = Modifier.weight(1.2f).height(28.dp),
+            spriteOff = skin.sprites.repeatOff,
+            spriteOn = skin.sprites.repeatOn,
+            modifier = Modifier.weight(1.05f).height(28.dp),
           )
           BeveledLedToggleButton(
             label = "EQ",
             checked = isEqVisible,
             onClick = onToggleEqVisible,
             compact = true,
+            spriteOff = skin.sprites.eqButtonOff,
+            spriteOn = skin.sprites.eqButtonOn,
             modifier = Modifier.weight(0.75f).height(28.dp),
           )
           BeveledLedToggleButton(
@@ -423,7 +477,9 @@ fun MainDeckPanel(
             checked = isSheetExpanded,
             onClick = onTogglePlaylistSheet,
             compact = true,
-            modifier = Modifier.weight(1.0f).height(28.dp),
+            spriteOff = skin.sprites.plButtonOff,
+            spriteOn = skin.sprites.plButtonOn,
+            modifier = Modifier.weight(0.85f).height(28.dp),
           )
         }
       }

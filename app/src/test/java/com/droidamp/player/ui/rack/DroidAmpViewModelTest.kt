@@ -58,23 +58,33 @@ class DroidAmpViewModelTest {
   }
 
   @Test
-  fun coldLaunch_resetsVolumeTo204OnlyWhenStopped() = runTest {
+  fun coldLaunch_honoursRememberLastDefault_andClassic80PercentOgResetWhenStopped() = runTest {
     val engine = FakeAudioEngineController(backgroundScope, enableSimulationTicker = false)
     engine.setVolume(40)
     assertEquals(PlaybackStatus.STOPPED, engine.playbackState.value.status)
 
-    // Cold launch while stopped resets volume to default 204 (~80%)
+    // M6 ADR-029 default (REMEMBER_LAST) preserves volume=40 when stopped
     val repo = FakeMusicSourceRepository(startLinked = false)
     DroidAmpViewModel(engine, repo)
+    assertEquals(40, engine.playbackState.value.volume)
+
+    // Classic 80% [OG] startup mode resets stopped volume to 204
+    val classicOgPrefs =
+      com.droidamp.player.storage.InMemoryAppPreferencesRepository(
+        com.droidamp.player.storage.AppPreferences(
+          startupVolumeMode = com.droidamp.player.storage.StartupVolumeMode.CLASSIC_80_PERCENT,
+        ),
+      )
+    DroidAmpViewModel(engine, repo, appPreferencesRepository = classicOgPrefs)
     assertEquals(PlaybackState.DEFAULT_COLD_LAUNCH_VOLUME, engine.playbackState.value.volume)
     assertEquals(204, engine.playbackState.value.volume)
 
-    // Start playback quietly at 35 -> resuming must NEVER blast volume back up to 204
+    // Start playback quietly at 35 -> even CLASSIC_80_PERCENT must NEVER blast volume back up to 204
     engine.replaceQueue(FakeMusicSourceRepository.DAFT_PUNK_TRACKS, startIndex = 0, autoPlay = true)
     engine.setVolume(35)
     assertEquals(PlaybackStatus.PLAYING, engine.playbackState.value.status)
 
-    DroidAmpViewModel(engine, repo)
+    DroidAmpViewModel(engine, repo, appPreferencesRepository = classicOgPrefs)
     assertEquals(35, engine.playbackState.value.volume)
   }
 
@@ -600,6 +610,40 @@ class DroidAmpViewModelTest {
   }
 
   @Test
+  fun movePlaylistTracksStep_movesAllSelectedTracksTogetherAndRespectsBounds() = runTest {
+    val engine = FakeAudioEngineController(backgroundScope, enableSimulationTicker = false)
+    val repo = FakeMusicSourceRepository(startLinked = true)
+    val vm = DroidAmpViewModel(engine, repo)
+    val tracks = FakeMusicSourceRepository.DAFT_PUNK_TRACKS // 4 tracks
+    engine.replaceQueue(tracks, startIndex = 0, autoPlay = false)
+
+    // Select {0, 2}: cannot move up (index 0 at top)
+    vm.onPlaylistTrackClick(0)
+    vm.onPlaylistTrackClick(2)
+    assertFalse(vm.movePlaylistTracksStep(anchorIndex = 0, delta = -1))
+
+    // Move selection {0, 2} down by +1 via anchor 2 -> [1, 0, 3, 2], selection becomes {1, 3}
+    assertTrue(vm.movePlaylistTracksStep(anchorIndex = 2, delta = 1))
+    assertEquals(
+      listOf(tracks[1].id, tracks[0].id, tracks[3].id, tracks[2].id),
+      vm.playbackState.value.queue.map { it.id },
+    )
+    assertEquals(setOf(1, 3), vm.uiState.value.selectedPlaylistIndices)
+    assertEquals(1, vm.playbackState.value.currentIndex)
+
+    // Cannot move down further (index 3 at bottom)
+    assertFalse(vm.movePlaylistTracksStep(anchorIndex = 3, delta = 1))
+
+    // Dragging an unselected row (index 0) down by +1 moves only that row & shifts selection {1, 3} -> {0, 3}
+    assertTrue(vm.movePlaylistTracksStep(anchorIndex = 0, delta = 1))
+    assertEquals(
+      listOf(tracks[0].id, tracks[1].id, tracks[3].id, tracks[2].id),
+      vm.playbackState.value.queue.map { it.id },
+    )
+    assertEquals(setOf(0, 3), vm.uiState.value.selectedPlaylistIndices)
+  }
+
+  @Test
   fun jumpFilter_preservesOriginalQueueIndicesForSelectionDoubleClickAndMove() = runTest {
     val engine = FakeAudioEngineController(backgroundScope, enableSimulationTicker = false)
     val repo = FakeMusicSourceRepository(startLinked = true)
@@ -677,7 +721,7 @@ class DroidAmpViewModelTest {
 
     assertEquals(listOf("content://good/rootA"), vm.linkedRoots.value.map { it.uriString })
     assertEquals(
-      "UNABLE TO LINK MUSIC FOLDER — SELECT A READABLE FOLDER",
+      "COULDN'T ACCESS FOLDER — TRY ANOTHER",
       vm.uiState.value.statusBanner,
     )
     assertFalse(vm.uiState.value.isSheetExpanded)
@@ -691,7 +735,7 @@ class DroidAmpViewModelTest {
       listOf("content://good/rootA", "content://good/rootC"),
       vm.linkedRoots.value.map { it.uriString },
     )
-    assertEquals("LINKED MUSIC FOLDER (SAF)", vm.uiState.value.statusBanner)
+    assertEquals("MUSIC FOLDER LINKED", vm.uiState.value.statusBanner)
     assertTrue(vm.uiState.value.isSheetExpanded)
   }
 
@@ -718,6 +762,421 @@ class DroidAmpViewModelTest {
     vm.playPrimaryLibrarySelection()
     assertEquals(listOf(rootTracks.first()), vm.playbackState.value.queue)
     assertEquals(SheetMode.PLAYLIST, vm.uiState.value.sheetMode)
+  }
+
+  // --- Area E: Milestone 5 Wrong-Slot Redirects & Inform+Override Skin Recovery ---
+
+  @Test
+  fun wrongSlotRedirect_eqfQ1Q2IniAndM3uApplyDomainActionsAndDismissNotice() = runTest {
+    val engine = FakeAudioEngineController(backgroundScope, enableSimulationTicker = false)
+    val repo = FakeMusicSourceRepository(startLinked = true)
+    val skinRepo = RecordingSkinRepository()
+    val eqfCodec = com.droidamp.player.interop.BinaryEqfCodec()
+    val q2Codec = WinampQ2Codec()
+    val iniCodec = com.droidamp.player.interop.WinampIniParser()
+    val playlistCodec = WinampPlaylistCodec()
+    val vm =
+      DroidAmpViewModel(
+        audioEngine = engine,
+        musicRepository = repo,
+        skinRepository = skinRepo,
+        eqfCodec = eqfCodec,
+        q2Codec = q2Codec,
+        iniCodec = iniCodec,
+      )
+    advanceUntilIdle()
+
+    // 1. Single .eqf redirect -> merges preset, applies to EQ, dismisses notice
+    val customPreset =
+      EqPreset(
+        name = "Cyber Bass",
+        preampDb = 2.0f,
+        bandsDb = listOf(6f, 5f, 3f, 0f, -2f, -2f, 0f, 2f, 4f, 5f),
+      )
+    val eqfNotice =
+      com.droidamp.player.skin.SkinRecoveryNotice.WrongSlotFileDetected(
+        uriString = "content://downloads/cyber_bass.eqf",
+        fileName = "cyber_bass.eqf",
+        detectedFormat = com.droidamp.player.interop.DetectedWinampFormat.EqfSinglePreset,
+        rawBytes = eqfCodec.encodeSingleEqf(customPreset),
+      )
+    skinRepo.emitNotice(eqfNotice)
+    vm.confirmWrongSlotRedirect(eqfNotice)
+    advanceUntilIdle()
+
+    org.junit.Assert.assertNull(vm.skinRecoveryNotice.value)
+    assertEquals("Cyber Bass", vm.playbackState.value.equalizer.activePresetName)
+    assertTrue(vm.uiState.value.availableEqPresets.any { it.name == "Cyber Bass" })
+    assertEquals("APPLIED EQ PRESET: CYBER BASS", vm.uiState.value.statusBanner)
+
+    // 2. Multi-preset .q1 redirect -> loads presets, applies first, dismisses notice
+    val q1Presets =
+      listOf(
+        EqPreset("Warm Tape", 1.0f, List(10) { 1.5f }),
+        EqPreset("Crisp Studio", 0.0f, List(10) { 2.5f }),
+      )
+    val q1Notice =
+      com.droidamp.player.skin.SkinRecoveryNotice.WrongSlotFileDetected(
+        uriString = "content://downloads/winamp.q1",
+        fileName = "winamp.q1",
+        detectedFormat = com.droidamp.player.interop.DetectedWinampFormat.EqLibraryQ1,
+        rawBytes = eqfCodec.encodePresetLibraryQ1(q1Presets),
+      )
+    skinRepo.emitNotice(q1Notice)
+    vm.confirmWrongSlotRedirect(q1Notice)
+    advanceUntilIdle()
+
+    org.junit.Assert.assertNull(vm.skinRecoveryNotice.value)
+    assertEquals("Warm Tape", vm.playbackState.value.equalizer.activePresetName)
+    assertTrue(vm.uiState.value.availableEqPresets.any { it.name == "Crisp Studio" })
+    assertEquals("LOADED 2 PRESETS (.Q1)", vm.uiState.value.statusBanner)
+
+    // 3. Auto-EQ .q2 redirect -> feeds live observeAutoEqMatching()
+    val q2Rules = listOf(AutoEqRule("01_one_more_time.flac", ClassicWinampPresets.TECHNO))
+    val q2Notice =
+      com.droidamp.player.skin.SkinRecoveryNotice.WrongSlotFileDetected(
+        uriString = "content://downloads/winamp.q2",
+        fileName = "winamp.q2",
+        detectedFormat = com.droidamp.player.interop.DetectedWinampFormat.AutoEqQ2,
+        rawBytes = q2Codec.encodeAutoPresetsQ2(q2Rules),
+      )
+    engine.replaceQueue(FakeMusicSourceRepository.DAFT_PUNK_TRACKS, startIndex = 0, autoPlay = false)
+    engine.setEqAutoEnabled(true)
+    advanceUntilIdle()
+    skinRepo.emitNotice(q2Notice)
+    vm.confirmWrongSlotRedirect(q2Notice)
+    advanceUntilIdle()
+
+    org.junit.Assert.assertNull(vm.skinRecoveryNotice.value)
+    assertEquals("LOADED 1 AUTO-EQ RULES (.Q2)", vm.uiState.value.statusBanner)
+    assertEquals("01_one_more_time.flac", vm.playbackState.value.equalizer.activePresetName)
+
+    // 4. winamp.ini redirect -> applies volume, pan, shuffle, repeat, timeMode, EQ & DSP settings
+    val iniSnapshot =
+      com.droidamp.player.domain.contract.WinampIniSnapshot(
+        volume = 180,
+        pan = -32,
+        shuffle = true,
+        repeat = true,
+        timeRemaining = true,
+        eqEnabled = false,
+        eqAuto = false,
+        eqPreampDb = 3.0f,
+        eqBandsDb = List(10) { -1.5f },
+        replayGainMode = 2,
+        replayGainPreampDb = 1.5f,
+        crossfadeSeconds = 4,
+      )
+    val iniNotice =
+      com.droidamp.player.skin.SkinRecoveryNotice.WrongSlotFileDetected(
+        uriString = "content://downloads/winamp.ini",
+        fileName = "winamp.ini",
+        detectedFormat = com.droidamp.player.interop.DetectedWinampFormat.WinampIni,
+        rawBytes = iniCodec.encode(iniSnapshot).toByteArray(Charsets.UTF_8),
+      )
+    skinRepo.emitNotice(iniNotice)
+    vm.confirmWrongSlotRedirect(iniNotice)
+    advanceUntilIdle()
+
+    org.junit.Assert.assertNull(vm.skinRecoveryNotice.value)
+    assertEquals(180, vm.playbackState.value.volume)
+    assertEquals(-32, vm.playbackState.value.balance)
+    assertTrue(vm.playbackState.value.shuffle)
+    assertEquals(com.droidamp.player.domain.model.RepeatMode.ALL, vm.playbackState.value.repeatMode)
+    assertEquals(
+      com.droidamp.player.domain.model.TimeDisplayMode.REMAINING,
+      vm.playbackState.value.timeDisplayMode,
+    )
+    assertFalse(vm.playbackState.value.equalizer.enabled)
+    assertEquals(
+      com.droidamp.player.domain.model.ReplayGainMode.ALBUM,
+      engine.dspSettings.value.replayGainMode,
+    )
+    assertEquals(4, engine.dspSettings.value.crossfadeSeconds)
+    assertEquals("APPLIED WINAMP.INI SETTINGS", vm.uiState.value.statusBanner)
+
+    // 5. Playlist .m3u redirect -> resolves local tracks and switches to QUEUE
+    val targetTracks = FakeMusicSourceRepository.DAFT_PUNK_TRACKS.take(2)
+    val m3uBytes = playlistCodec.encodeM3u8(targetTracks).toByteArray(Charsets.UTF_8)
+    val m3uNotice =
+      com.droidamp.player.skin.SkinRecoveryNotice.WrongSlotFileDetected(
+        uriString = "content://downloads/favorites.m3u8",
+        fileName = "favorites.m3u8",
+        detectedFormat = com.droidamp.player.interop.DetectedWinampFormat.PlaylistM3u,
+        rawBytes = m3uBytes,
+      )
+    vm.switchSheetMode(SheetMode.LIBRARY)
+    skinRepo.emitNotice(m3uNotice)
+    vm.confirmWrongSlotRedirect(m3uNotice)
+    advanceUntilIdle()
+
+    org.junit.Assert.assertNull(vm.skinRecoveryNotice.value)
+    assertEquals(SheetMode.PLAYLIST, vm.uiState.value.sheetMode)
+    assertEquals(2, vm.playbackState.value.queue.size)
+    assertEquals(targetTracks.map { it.id }.toSet(), vm.playbackState.value.queue.map { it.id }.toSet())
+  }
+
+  @Test
+  fun skinRecoveryActions_overrideRawColorsLegacyRenderModeAndDuplicateResolution() = runTest {
+    val engine = FakeAudioEngineController(backgroundScope, enableSimulationTicker = false)
+    val repo = FakeMusicSourceRepository(startLinked = false)
+    val skinRepo = RecordingSkinRepository()
+    val vm = DroidAmpViewModel(audioEngine = engine, musicRepository = repo, skinRepository = skinRepo)
+    advanceUntilIdle()
+
+    vm.setLegacySkinRenderMode(com.droidamp.player.skin.SkinRenderMode.CLASSIC_RAW_BMP)
+    assertEquals(
+      com.droidamp.player.skin.SkinRenderMode.CLASSIC_RAW_BMP,
+      vm.skinSettings.value.legacyRenderMode,
+    )
+
+    vm.setAutoContrastGuard(false)
+    assertFalse(vm.skinSettings.value.autoContrastGuard)
+
+    skinRepo.emitNotice(
+      com.droidamp.player.skin.SkinRecoveryNotice.ContrastGuardApplied(
+        skinId = "legacy-amp",
+        skinName = "Legacy Amp",
+        adjustedTokenCount = 3,
+      ),
+    )
+    vm.useRawOgColorsForSkin("legacy-amp")
+    assertTrue("legacy-amp" in vm.skinSettings.value.rawColorOverrideSkinIds)
+    org.junit.Assert.assertNull(vm.skinRecoveryNotice.value)
+
+    val existing =
+      com.droidamp.player.skin.SkinEntry(
+        id = "imp-1",
+        displayName = "Cyber Ice",
+        source = com.droidamp.player.skin.SkinSource.IMPORTED,
+        origin = com.droidamp.player.skin.SkinOrigin.AUGMENTED_WSZ,
+      )
+    val conflict =
+      com.droidamp.player.skin.SkinRecoveryNotice.DuplicateSkinConflict(
+        uriString = "content://downloads/cyber.wsz",
+        existingEntry = existing,
+        proposedFileName = "cyber.wsz",
+        rawBytes = byteArrayOf(1, 2, 3),
+      )
+    skinRepo.emitNotice(conflict)
+    vm.resolveDuplicateSkinImport(conflict, replaceExisting = true)
+    advanceUntilIdle()
+
+    assertEquals(true, skinRepo.lastReplaceExisting)
+    org.junit.Assert.assertNull(vm.skinRecoveryNotice.value)
+  }
+
+  @Test
+  fun settingsModeAB_eqPresetsSaveCollisionAndWrongSlotWszRedirectWork() = runTest {
+    val engine = FakeAudioEngineController(backgroundScope, enableSimulationTicker = false)
+    val repo = FakeMusicSourceRepository(startLinked = true)
+    val skinRepo = RecordingSkinRepository()
+    val prefsRepo = com.droidamp.player.storage.InMemoryAppPreferencesRepository()
+    val eqStore =
+      com.droidamp.player.interop.UserEqPresetStore(
+        gateway =
+          object : com.droidamp.player.interop.ByteStoreGateway {
+            private val files = mutableMapOf<String, ByteArray>()
+            override fun readBytes(fileName: String): ByteArray? = files[fileName]
+            override fun writeBytes(fileName: String, bytes: ByteArray) {
+              files[fileName] = bytes
+            }
+            override fun delete(fileName: String) {
+              files.remove(fileName)
+            }
+          },
+      )
+    val vm =
+      DroidAmpViewModel(
+        audioEngine = engine,
+        musicRepository = repo,
+        skinRepository = skinRepo,
+        appPreferencesRepository = prefsRepo,
+        userEqPresetStore = eqStore,
+      )
+    advanceUntilIdle()
+
+    // Bottom [⚙] open -> expands drawer & opens Settings -> drill into SKINS -> Back -> closes cleanly
+    vm.openSettings()
+    assertTrue(vm.uiState.value.isSheetExpanded)
+    assertTrue(vm.uiState.value.isSettingsOpen)
+    assertEquals(com.droidamp.player.ui.settings.SettingsRoute.MAIN, vm.uiState.value.settingsRoute)
+    vm.navigateSettings(com.droidamp.player.ui.settings.SettingsRoute.SKINS)
+    vm.navigateBackInSettings()
+    assertEquals(com.droidamp.player.ui.settings.SettingsRoute.MAIN, vm.uiState.value.settingsRoute)
+    assertTrue(vm.uiState.value.isSettingsOpen)
+    vm.navigateBackInSettings()
+    assertFalse(vm.uiState.value.isSettingsOpen)
+
+    // Pulling down / collapsing sheet or tapping [QUEUE]/[LIBRARY] exits Settings and preserves tab
+    vm.switchSheetMode(SheetMode.LIBRARY)
+    vm.openSettings()
+    assertTrue(vm.uiState.value.isSettingsOpen)
+    vm.collapseSheet()
+    assertFalse(vm.uiState.value.isSheetExpanded)
+    assertFalse(vm.uiState.value.isSettingsOpen)
+    assertEquals(SheetMode.LIBRARY, vm.uiState.value.sheetMode)
+
+    vm.openSettings()
+    assertTrue(vm.uiState.value.isSettingsOpen)
+    vm.switchSheetMode(SheetMode.PLAYLIST)
+    assertFalse(vm.uiState.value.isSettingsOpen)
+    assertEquals(SheetMode.PLAYLIST, vm.uiState.value.sheetMode)
+
+    // Track transition radio + persisted crossfade duration
+    vm.setCrossfadeDurationSec(7)
+    vm.setTrackTransitionMode(com.droidamp.player.storage.TrackTransitionMode.CROSSFADE)
+    advanceUntilIdle()
+    assertEquals(7, engine.dspSettings.value.crossfadeSeconds)
+    assertFalse(engine.dspSettings.value.gaplessEnabled)
+    vm.setTrackTransitionMode(com.droidamp.player.storage.TrackTransitionMode.GAPLESS)
+    advanceUntilIdle()
+    assertEquals(0, engine.dspSettings.value.crossfadeSeconds)
+    assertTrue(engine.dspSettings.value.gaplessEnabled)
+    assertEquals(7, vm.appPreferences.value.crossfadeDurationSec)
+
+    // On-deck EQ Presets: save -> conflict check -> delete
+    vm.setPreampDb(2.5f)
+    vm.setEqBandDb(0, 4.0f)
+    assertEquals(
+      com.droidamp.player.interop.PresetConflictType.BUILT_IN_PRESET,
+      vm.checkEqPresetConflict(ClassicWinampPresets.ROCK.name),
+    )
+    vm.saveCurrentEqCurveAsPreset("Midnight Warm")
+    advanceUntilIdle()
+    assertEquals(
+      com.droidamp.player.interop.PresetConflictType.USER_PRESET,
+      vm.checkEqPresetConflict("midnight warm"),
+    )
+    assertTrue(vm.userEqPresets.value.any { it.name == "Midnight Warm" })
+    vm.deleteUserEqPreset("Midnight Warm")
+    advanceUntilIdle()
+    assertFalse(vm.userEqPresets.value.any { it.name == "Midnight Warm" })
+
+    // Open EQ Presets Settings sub-screen deep-link & AudioBufferMode preference sync
+    assertTrue(engine.lowLatencyAudioBufferEnabled)
+    vm.openEqPresetsSettings()
+    assertTrue(vm.uiState.value.isSheetExpanded)
+    assertTrue(vm.uiState.value.isSettingsOpen)
+    assertEquals(com.droidamp.player.ui.settings.SettingsRoute.EQ_PRESETS, vm.uiState.value.settingsRoute)
+    vm.updateAppPreferences { it.copy(audioBufferMode = com.droidamp.player.storage.AudioBufferMode.STANDARD) }
+    advanceUntilIdle()
+    assertFalse(engine.lowLatencyAudioBufferEnabled)
+    vm.updateAppPreferences { it.copy(audioBufferMode = com.droidamp.player.storage.AudioBufferMode.LOW_LATENCY) }
+    advanceUntilIdle()
+    assertTrue(engine.lowLatencyAudioBufferEnabled)
+
+    // Selecting a .wsz skin inside EQ .eqf slot emits WrongSlotFileDetected -> 1-tap redirect imports skin
+    val fakeWsz = buildMinimalValidWszZip()
+    vm.importFileForSlot(
+      slot = ImportSlot.EQ_PRESET_EQF,
+      fileName = "amber_pack.wsz",
+      rawBytes = fakeWsz,
+    )
+    advanceUntilIdle()
+    val notice = vm.skinRecoveryNotice.value as? com.droidamp.player.skin.SkinRecoveryNotice.WrongSlotFileDetected
+    assertNotNull(notice)
+    assertTrue(notice!!.detectedFormat is com.droidamp.player.interop.DetectedWinampFormat.WszSkin)
+    vm.confirmWrongSlotRedirect(notice)
+    advanceUntilIdle()
+    assertEquals("amber_pack.wsz", skinRepo.lastImportedBytesName)
+    org.junit.Assert.assertNull(vm.skinRecoveryNotice.value)
+  }
+
+  private fun buildMinimalValidWszZip(): ByteArray {
+    val bos = java.io.ByteArrayOutputStream()
+    java.util.zip.ZipOutputStream(bos).use { zos ->
+      zos.putNextEntry(java.util.zip.ZipEntry("droidamp.json"))
+      zos.write("""{"schemaVersion":1,"name":"Amber Pack"}""".toByteArray(Charsets.UTF_8))
+      zos.closeEntry()
+    }
+    return bos.toByteArray()
+  }
+
+  private class RecordingSkinRepository : com.droidamp.player.skin.SkinRepository {
+    private val _availableSkins = MutableStateFlow<List<com.droidamp.player.skin.SkinEntry>>(emptyList())
+    override val availableSkins: StateFlow<List<com.droidamp.player.skin.SkinEntry>> =
+      _availableSkins.asStateFlow()
+
+    private val _activeSkin =
+      MutableStateFlow<com.droidamp.player.skin.DroidAmpSkin>(com.droidamp.player.skin.ClassicDroidAmpSkin)
+    override val activeSkin: StateFlow<com.droidamp.player.skin.DroidAmpSkin> = _activeSkin.asStateFlow()
+
+    private val _skinSettings = MutableStateFlow(com.droidamp.player.skin.SkinSettingsState())
+    override val skinSettings: StateFlow<com.droidamp.player.skin.SkinSettingsState> =
+      _skinSettings.asStateFlow()
+
+    private val _recoveryNotice = MutableStateFlow<com.droidamp.player.skin.SkinRecoveryNotice?>(null)
+    override val recoveryNotice: StateFlow<com.droidamp.player.skin.SkinRecoveryNotice?> =
+      _recoveryNotice.asStateFlow()
+
+    var lastReplaceExisting: Boolean? = null
+    var lastImportedBytesName: String? = null
+
+    fun emitNotice(notice: com.droidamp.player.skin.SkinRecoveryNotice?) {
+      _recoveryNotice.value = notice
+    }
+
+    override fun refreshSkins(linkedRootUris: List<String>) = Unit
+    override fun selectSkin(skinId: String) = Unit
+    override suspend fun importSkinFromUri(uriString: String): Result<com.droidamp.player.skin.SkinEntry?> =
+      Result.success(null)
+
+    override suspend fun importSkinFromBytes(
+      fileName: String,
+      rawBytes: ByteArray,
+    ): Result<com.droidamp.player.skin.SkinEntry?> {
+      lastImportedBytesName = fileName
+      return Result.success(
+        com.droidamp.player.skin.SkinEntry(
+          id = "imported:$fileName",
+          displayName = fileName.substringBeforeLast('.'),
+          source = com.droidamp.player.skin.SkinSource.IMPORTED,
+          origin = com.droidamp.player.skin.SkinOrigin.AUGMENTED_WSZ,
+        ),
+      )
+    }
+
+    override suspend fun resolveDuplicateImport(
+      conflict: com.droidamp.player.skin.SkinRecoveryNotice.DuplicateSkinConflict,
+      replaceExisting: Boolean,
+    ): Result<com.droidamp.player.skin.SkinEntry> {
+      lastReplaceExisting = replaceExisting
+      _recoveryNotice.value = null
+      return Result.success(conflict.existingEntry)
+    }
+
+    override suspend fun deleteImportedSkin(skinId: String): Boolean = true
+
+    override fun setLegacyRenderMode(mode: com.droidamp.player.skin.SkinRenderMode) {
+      _skinSettings.value = _skinSettings.value.copy(legacyRenderMode = mode)
+    }
+
+    override fun setAutoContrastGuard(enabled: Boolean) {
+      _skinSettings.value = _skinSettings.value.copy(autoContrastGuard = enabled)
+    }
+
+    override fun setSkinRawColorsOverride(skinId: String, useRawColors: Boolean) {
+      val updated =
+        if (useRawColors) {
+          _skinSettings.value.rawColorOverrideSkinIds + skinId
+        } else {
+          _skinSettings.value.rawColorOverrideSkinIds - skinId
+        }
+      _skinSettings.value = _skinSettings.value.copy(rawColorOverrideSkinIds = updated)
+    }
+
+    override fun retrySafeBootSkin(skinId: String) {
+      _recoveryNotice.value = null
+    }
+
+    override fun revertToSkin(skinId: String) {
+      _recoveryNotice.value = null
+    }
+
+    override fun dismissRecoveryNotice() {
+      _recoveryNotice.value = null
+    }
   }
 
   private class RecordingSaveMusicRepository(

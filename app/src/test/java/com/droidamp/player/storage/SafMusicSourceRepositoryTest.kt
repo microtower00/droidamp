@@ -341,7 +341,7 @@ class SafMusicSourceRepositoryTest {
   }
 
   @Test
-  fun revokedPermissionsAndRejectedLink_degradeGracefullyAndPruneStore() = runTest {
+  fun revokedPermissionsAndRejectedLink_retainAccessLostNonDestructivelyAndSupportRegrantOrRemove() = runTest {
     val gateway = FakeSafTreeGateway()
     val prefs = createPreferencesStore("saf_revoked.preferences_pb", backgroundScope)
 
@@ -362,21 +362,33 @@ class SafMusicSourceRepositoryTest {
     val contents = repo.browseFolder(null)
     assertEquals(validTree, contents.currentFolderUri)
     assertEquals(1, repo.linkedRoots.value.size)
-    assertEquals(listOf(PersistedSafRoot(validTree, "Valid")), prefs.loadSnapshot().safRoots)
+    // Non-destructive retention: both remain in prefs, while managedSafFolders surfaces ACCESS LOST (`ADR-029`)
+    assertEquals(
+      listOf(PersistedSafRoot(validTree, "Valid"), PersistedSafRoot(revokedTree, "Revoked")),
+      prefs.loadSnapshot().safRoots,
+    )
+    assertEquals(listOf(true, false), repo.managedSafFolders.value.map { it.isAccessible })
 
-    // Mid-session revocation
+    // Mid-session revocation marks Access Lost without silently deleting user's folder record
     gateway.accessibleTrees.remove(validTree)
     assertEquals(FolderContents.EMPTY, repo.browseFolder(validTree))
     assertTrue(repo.linkedRoots.value.isEmpty())
-    assertTrue(prefs.loadSnapshot().safRoots.isEmpty())
+    assertEquals(2, prefs.loadSnapshot().safRoots.size)
+    assertTrue(repo.managedSafFolders.value.none { it.isAccessible })
 
-    // Re-link and unlinkAllRoots
-    gateway.accessibleTrees.add(validTree)
-    repo.linkSafRoot(validTree)
+    // Replace / Re-grant revoked root and explicitly remove the remaining inaccessible root
+    val regrantedTree = "content://tree/regranted"
+    gateway.addTree(regrantedTree, "$regrantedTree/document/root", "Regranted")
+    assertTrue(repo.replaceSafRoot(revokedTree, regrantedTree))
     assertEquals(1, repo.linkedRoots.value.size)
+    repo.removeSafRoot(validTree)
+    assertEquals(1, repo.managedSafFolders.value.size)
+    assertEquals(regrantedTree, repo.managedSafFolders.value.first().uriString)
+
     repo.unlinkAllRoots()
     assertTrue(repo.linkedRoots.value.isEmpty())
-    assertTrue(gateway.releasedUris.contains(validTree))
+    assertTrue(repo.managedSafFolders.value.isEmpty())
+    assertTrue(gateway.releasedUris.contains(regrantedTree))
   }
 
   @Test

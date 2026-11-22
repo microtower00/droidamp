@@ -25,8 +25,10 @@ import com.droidamp.player.domain.model.RepeatMode
 import com.droidamp.player.domain.model.VisualizerFrame
 import com.droidamp.player.interop.AutoEqMatcher
 import com.droidamp.player.interop.WinampPlaylistCodec
+import com.droidamp.player.storage.AppPreferences
 import com.droidamp.player.storage.AudioMetadataExtractor
 import com.droidamp.player.storage.AudioMetadataProbe
+import com.droidamp.player.storage.InMemoryAppPreferencesRepository
 import com.droidamp.player.storage.MediaStoreAudioRecord
 import com.droidamp.player.storage.MediaStoreGateway
 import com.droidamp.player.storage.MediaStoreMusicSourceRepository
@@ -36,6 +38,7 @@ import com.droidamp.player.storage.ProbedAudioMetadata
 import com.droidamp.player.storage.SafDocumentNode
 import com.droidamp.player.storage.SafMusicSourceRepository
 import com.droidamp.player.storage.SafTreeGateway
+import com.droidamp.player.storage.StartupVolumeMode
 import com.droidamp.player.storage.StoragePreferencesStore
 import com.droidamp.player.storage.SwitchingMusicSourceRepository
 import kotlinx.coroutines.CoroutineDispatcher
@@ -304,12 +307,28 @@ class DroidAmpAppContainerWiringTest {
     val gateway = InMemoryAudioGateway()
     val controller = Media3AudioEngineController(gateway, dspStore, backgroundScope)
 
-    val factory = DroidAmpAppContainer.createViewModelFactory(controller, repo)
-    val vm1 = factory.create(DroidAmpViewModel::class.java)
+    val rememberLastFactory = DroidAmpAppContainer.createViewModelFactory(controller, repo)
+    val vmDefault = rememberLastFactory.create(DroidAmpViewModel::class.java)
     controller.awaitInitialHydration()
     advanceUntilIdle()
 
-    // Fresh cold launch while STOPPED -> volume forced to 204 even though DataStore had 45
+    // ADR-029 default (REMEMBER_LAST) preserves persisted DataStore volume (45) when stopped
+    assertEquals(45, vmDefault.playbackState.value.volume)
+    assertEquals(45, gateway.lastAppliedVolume)
+
+    // CLASSIC_80_PERCENT [OG] cold launch while STOPPED -> resets volume to 204
+    val factory =
+      DroidAmpAppContainer.createViewModelFactory(
+        audioEngine = controller,
+        musicRepository = repo,
+        appPreferencesRepository =
+          InMemoryAppPreferencesRepository(
+            AppPreferences(startupVolumeMode = StartupVolumeMode.CLASSIC_80_PERCENT),
+          ),
+      )
+    val vm1 = factory.create(DroidAmpViewModel::class.java)
+    advanceUntilIdle()
+
     assertEquals(204, vm1.playbackState.value.volume)
     assertEquals(204, gateway.lastAppliedVolume)
 

@@ -14,9 +14,9 @@ import com.droidamp.player.domain.model.PlaybackState
 import com.droidamp.player.domain.model.PlaybackStatus
 import com.droidamp.player.domain.model.formatWinampDuration
 import com.droidamp.player.skin.LocalDroidAmpSkin
+import com.droidamp.player.skin.TransportIconType
 import com.droidamp.player.ui.components.BeveledIconButton
 import com.droidamp.player.ui.components.RecessedWell
-import com.droidamp.player.ui.components.TransportIconType
 
 /**
  * Compact Winamp bottom transport micro-bar (`|< ▶ ❚❚ ■ >|` + elapsed/total time).

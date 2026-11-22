@@ -13,6 +13,7 @@ import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Metadata
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
@@ -87,6 +88,8 @@ class DroidAmpPlaybackService : MediaSessionService() {
   private var currentBalance: Int = 0
   private var currentRepeatMode: RepeatMode = RepeatMode.OFF
   private var currentShuffle: Boolean = false
+  private var currentLowLatencyAudioBuffer: Boolean = false
+  private var currentHandleAudioBecomingNoisy: Boolean = true
   private var currentReplayGain: ReplayGainMetadata = ReplayGainMetadata.EMPTY
 
   private var artworkJob: Job? = null
@@ -106,8 +109,8 @@ class DroidAmpPlaybackService : MediaSessionService() {
     attachDeckListeners(deckId = 0, player = player0)
     attachDeckListeners(deckId = 1, player = player1)
 
-    deck0 = ExoCrossfadeDeck(deckId = 0, player = player0)
-    deck1 = ExoCrossfadeDeck(deckId = 1, player = player1)
+    deck0 = ExoCrossfadeDeck(deckId = 0)
+    deck1 = ExoCrossfadeDeck(deckId = 1)
 
     crossfadeController =
       CrossfadeController(
@@ -139,7 +142,8 @@ class DroidAmpPlaybackService : MediaSessionService() {
               newStandbyPlayer.setAudioAttributes(musicAudioAttributes, false)
               newActivePlayer.setAudioAttributes(musicAudioAttributes, true)
               newActivePlayer.repeatMode = toMedia3RepeatMode(currentRepeatMode)
-              newActivePlayer.shuffleModeEnabled = currentShuffle
+              // DroidAmp owns deterministic queue-order shuffle; keep ExoPlayer linear.
+              newActivePlayer.shuffleModeEnabled = false
 
               forwardingPlayer.swapDelegate(newActivePlayer)
               refreshSystemMediaMetadata(newTrack)
@@ -253,12 +257,67 @@ class DroidAmpPlaybackService : MediaSessionService() {
     dspChain: DroidAmpDspChain,
     handleAudioFocus: Boolean,
   ): ExoPlayer =
-    ExoPlayer.Builder(this, DroidAmpAudioRenderersFactory(this, dspChain))
+    ExoPlayer.Builder(
+      this,
+      DroidAmpAudioRenderersFactory(
+        context = this,
+        dspChain = dspChain,
+        lowLatencyPcmBuffer = currentLowLatencyAudioBuffer,
+      ),
+    )
       .setAudioAttributes(musicAudioAttributes, handleAudioFocus)
-      .setHandleAudioBecomingNoisy(true)
+      .setHandleAudioBecomingNoisy(currentHandleAudioBecomingNoisy)
       .setWakeMode(C.WAKE_MODE_LOCAL)
       .setPauseAtEndOfMediaItems(false)
       .build()
+
+  private fun rebuildAudioDecksPreservingPlayback() {
+    val oldActive = activePlayer()
+    val wasPlaying =
+      oldActive.playWhenReady &&
+        oldActive.playbackState != Player.STATE_IDLE &&
+        oldActive.playbackState != Player.STATE_ENDED
+    val wasPaused =
+      !wasPlaying &&
+        (oldActive.playbackState == Player.STATE_READY ||
+          oldActive.playbackState == Player.STATE_BUFFERING)
+    val savedIdx = oldActive.currentMediaItemIndex
+    val savedPosMs = oldActive.currentPosition.coerceAtLeast(0L)
+
+    crossfadeController.cancelCrossfade()
+
+    val targetActiveDeckId = crossfadeController.activeDeck.deckId
+    activeDeckId = targetActiveDeckId
+
+    val old0 = player0
+    val old1 = player1
+
+    player0 = buildExoPlayer(chain0, handleAudioFocus = targetActiveDeckId == 0)
+    player1 = buildExoPlayer(chain1, handleAudioFocus = targetActiveDeckId == 1)
+    attachDeckListeners(deckId = 0, player = player0)
+    attachDeckListeners(deckId = 1, player = player1)
+
+    val m3Repeat = toMedia3RepeatMode(currentRepeatMode)
+    player0.repeatMode = m3Repeat
+    player1.repeatMode = m3Repeat
+    player0.shuffleModeEnabled = false
+    player1.shuffleModeEnabled = false
+
+    val newActive = activePlayer()
+    forwardingPlayer.swapDelegate(newActive)
+    old0.release()
+    old1.release()
+
+    if (currentMediaItems.isNotEmpty()) {
+      val safeIdx = savedIdx.coerceIn(0, currentMediaItems.lastIndex)
+      newActive.setMediaItems(currentMediaItems, safeIdx, savedPosMs)
+      if (wasPlaying || wasPaused) {
+        newActive.prepare()
+        newActive.playWhenReady = wasPlaying
+      }
+      refreshSystemMediaMetadata(currentTracks[safeIdx])
+    }
+  }
 
   private fun attachDeckListeners(
     deckId: Int,
@@ -314,6 +373,17 @@ class DroidAmpPlaybackService : MediaSessionService() {
         override fun onMetadata(metadata: Metadata) {
           if (deckId != activeDeckId) return
           emitReplayGainFromMetadata(metadata, player.currentMediaItem?.mediaId)
+        }
+
+        override fun onPlayerError(error: PlaybackException) {
+          if (deckId != activeDeckId) return
+          val currentIdx = player.currentMediaItemIndex
+          val track = currentTracks.getOrNull(currentIdx)
+          gatewayListener?.onTrackPlaybackError(
+            trackIndex = currentIdx,
+            track = track,
+            reason = error.errorCodeName,
+          )
         }
       },
     )
@@ -412,8 +482,10 @@ class DroidAmpPlaybackService : MediaSessionService() {
 
   private inner class ExoCrossfadeDeck(
     override val deckId: Int,
-    private val player: ExoPlayer,
   ) : CrossfadeDeck {
+    private val player: ExoPlayer
+      get() = playerForDeck(deckId)
+
     override fun setPlayerVolume(volume0To1: Float) {
       player.volume = volume0To1.coerceIn(0f, 1f)
     }
@@ -621,7 +693,7 @@ class DroidAmpPlaybackService : MediaSessionService() {
 
       val safeIdx = startIndex.coerceIn(0, currentMediaItems.lastIndex)
       player.repeatMode = toMedia3RepeatMode(currentRepeatMode)
-      player.shuffleModeEnabled = currentShuffle
+      player.shuffleModeEnabled = false
       player.setMediaItems(currentMediaItems, safeIdx, 0L)
       player.prepare()
       player.playWhenReady = playWhenReady
@@ -725,8 +797,8 @@ class DroidAmpPlaybackService : MediaSessionService() {
 
     override fun setShuffleEnabled(enabled: Boolean) {
       currentShuffle = enabled
-      player0.shuffleModeEnabled = enabled
-      player1.shuffleModeEnabled = enabled
+      player0.shuffleModeEnabled = false
+      player1.shuffleModeEnabled = false
     }
 
     override fun applyDspSettings(settings: DspSettings) {
@@ -792,6 +864,18 @@ class DroidAmpPlaybackService : MediaSessionService() {
 
     override fun cancelCrossfade() {
       crossfadeController.cancelCrossfade()
+    }
+
+    override fun setHandleAudioBecomingNoisy(enabled: Boolean) {
+      currentHandleAudioBecomingNoisy = enabled
+      player0.setHandleAudioBecomingNoisy(enabled)
+      player1.setHandleAudioBecomingNoisy(enabled)
+    }
+
+    override fun setLowLatencyAudioBuffer(enabled: Boolean) {
+      if (currentLowLatencyAudioBuffer == enabled) return
+      currentLowLatencyAudioBuffer = enabled
+      rebuildAudioDecksPreservingPlayback()
     }
   }
 

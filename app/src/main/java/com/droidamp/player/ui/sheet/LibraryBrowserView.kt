@@ -30,7 +30,6 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
 import com.droidamp.player.domain.model.AudioTrack
 import com.droidamp.player.domain.model.FolderContents
 import com.droidamp.player.domain.model.FolderEntry
@@ -40,6 +39,7 @@ import com.droidamp.player.domain.model.formatWinampDuration
 import com.droidamp.player.skin.LocalDroidAmpSkin
 import com.droidamp.player.ui.components.BeveledButton
 import com.droidamp.player.ui.components.RecessedWell
+import kotlinx.coroutines.delay
 
 /**
  * iPod-style Library browser (`ROOT` -> `FOLDERS` | `PLAYLISTS`) enforcing ADR-009 & ADR-020:
@@ -79,6 +79,7 @@ fun LibraryBrowserView(
   onEnqueuePrimarySelection: () -> Unit,
   onClearSelection: () -> Unit,
   modifier: Modifier = Modifier,
+  hapticFeedbackEnabled: Boolean = true,
 ) {
   val skin = LocalDroidAmpSkin.current
   val haptics = LocalHapticFeedback.current
@@ -87,14 +88,14 @@ fun LibraryBrowserView(
     when (libraryViewLevel) {
       LibraryViewLevel.FOLDERS -> selectedTrackIds.isNotEmpty()
       LibraryViewLevel.PLAYLISTS -> selectedPlaylistId != null
-      LibraryViewLevel.ROOT -> false
+      LibraryViewLevel.ROOT, LibraryViewLevel.SKINS -> false
     }
 
   Column(
     modifier = modifier.fillMaxSize(),
     verticalArrangement = Arrangement.spacedBy(5.dp),
   ) {
-    if (!hasLinkedRoots) {
+    if (!hasLinkedRoots && libraryViewLevel != LibraryViewLevel.ROOT) {
       EmptyFolderWell(
         onSelectMusicFolder = onSelectMusicFolder,
         modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -104,7 +105,7 @@ fun LibraryBrowserView(
       val breadcrumbText =
         libraryFeedbackBanner
           ?: when (libraryViewLevel) {
-            LibraryViewLevel.ROOT -> "LIBRARY"
+            LibraryViewLevel.ROOT, LibraryViewLevel.SKINS -> "LIBRARY"
             LibraryViewLevel.PLAYLISTS -> "LIBRARY / PLAYLISTS"
             LibraryViewLevel.FOLDERS -> {
               if (folderContents.currentPathSegments.isEmpty()) {
@@ -149,7 +150,9 @@ fun LibraryBrowserView(
             BeveledButton(
               label = "+ ALL",
               onClick = {
-                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                if (hapticFeedbackEnabled) {
+                  haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                }
                 onEnqueueCurrentFolder()
               },
               modifier = Modifier.height(24.dp),
@@ -166,7 +169,7 @@ fun LibraryBrowserView(
         contentPadding = PaddingValues(2.dp),
       ) {
         when (libraryViewLevel) {
-          LibraryViewLevel.ROOT -> {
+          LibraryViewLevel.ROOT, LibraryViewLevel.SKINS -> {
             LazyColumn(modifier = Modifier.fillMaxSize()) {
               item(key = "root-folders") {
                 Row(
@@ -184,10 +187,10 @@ fun LibraryBrowserView(
                       color = skin.playlist.folderAccentText,
                     )
                     val sub =
-                      if (folderContents.currentPathSegments.isNotEmpty()) {
-                        "RESUME: ${folderContents.currentPathSegments.joinToString(" / ").uppercase()}"
+                      if (folderContents.currentPathSegments.isEmpty()) {
+                        "BROWSE YOUR MUSIC FOLDERS"
                       } else {
-                        "BROWSE LINKED MUSIC FOLDERS"
+                        "RESUME: ${folderContents.currentPathSegments.joinToString(" / ").uppercase()}"
                       }
                     Text(
                       text = sub,
@@ -215,8 +218,9 @@ fun LibraryBrowserView(
                       style = skin.typography.trackRow,
                       color = skin.playlist.normalText,
                     )
+                    val savedLabel = if (playlists.size == 1) "1 SAVED PLAYLIST" else "${playlists.size} SAVED PLAYLISTS"
                     Text(
-                      text = "${playlists.size} SAVED .M3U / .M3U8 / .PLS",
+                      text = savedLabel,
                       style = skin.typography.microLabel,
                       color = skin.vfd.phosphorDim,
                     )
@@ -253,7 +257,7 @@ fun LibraryBrowserView(
                         "[..]  BACK TO LIBRARY"
                       },
                     style = skin.typography.trackRow,
-                    color = skin.playlist.breadcrumbText,
+                    color = skin.playlist.currentText,
                   )
                 }
               }
@@ -280,6 +284,8 @@ fun LibraryBrowserView(
                   BeveledButton(
                     label = "▶",
                     onClick = { onPlayFolder(folder) },
+                    spriteNormal = skin.sprites.mobileRowPlayNormal,
+                    spritePressed = skin.sprites.mobileRowPlayPressed,
                     modifier = Modifier.size(width = 32.dp, height = 28.dp),
                     contentPadding = PaddingValues(0.dp),
                   )
@@ -287,9 +293,13 @@ fun LibraryBrowserView(
                   BeveledButton(
                     label = "+",
                     onClick = {
-                      haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                      if (hapticFeedbackEnabled) {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                      }
                       onEnqueueFolder(folder)
                     },
+                    spriteNormal = skin.sprites.mobileRowEnqueueNormal,
+                    spritePressed = skin.sprites.mobileRowEnqueuePressed,
                     modifier = Modifier.size(width = 32.dp, height = 28.dp),
                     contentPadding = PaddingValues(0.dp),
                   )
@@ -340,6 +350,8 @@ fun LibraryBrowserView(
                   BeveledButton(
                     label = "▶",
                     onClick = { onPlayTrack(track) },
+                    spriteNormal = skin.sprites.mobileRowPlayNormal,
+                    spritePressed = skin.sprites.mobileRowPlayPressed,
                     modifier = Modifier.size(width = 32.dp, height = 28.dp),
                     contentPadding = PaddingValues(0.dp),
                   )
@@ -347,9 +359,13 @@ fun LibraryBrowserView(
                   BeveledButton(
                     label = "+",
                     onClick = {
-                      haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                      if (hapticFeedbackEnabled) {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                      }
                       onEnqueueTrack(track)
                     },
+                    spriteNormal = skin.sprites.mobileRowEnqueueNormal,
+                    spritePressed = skin.sprites.mobileRowEnqueuePressed,
                     modifier = Modifier.size(width = 32.dp, height = 28.dp),
                     contentPadding = PaddingValues(0.dp),
                   )
@@ -387,7 +403,7 @@ fun LibraryBrowserView(
                   Text(
                     text = "[..]  BACK TO LIBRARY",
                     style = skin.typography.trackRow,
-                    color = skin.playlist.breadcrumbText,
+                    color = skin.playlist.currentText,
                   )
                 }
               }
@@ -399,7 +415,7 @@ fun LibraryBrowserView(
                     contentAlignment = Alignment.Center,
                   ) {
                     Text(
-                      text = "NO .M3U / .PLS PLAYLISTS FOUND",
+                      text = "NO SAVED PLAYLISTS FOUND",
                       style = skin.typography.vfdInfo,
                       color = skin.vfd.phosphorDim,
                     )
@@ -429,8 +445,9 @@ fun LibraryBrowserView(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                       )
+                      val trackWord = if (pl.trackCount == 1) "TRACK" else "TRACKS"
                       Text(
-                        text = "${pl.trackCount} TRACKS · ${formatWinampDuration(pl.totalDurationMs)}",
+                        text = "${pl.trackCount} $trackWord · ${formatWinampDuration(pl.totalDurationMs)}",
                         style = skin.typography.microLabel,
                         color = if (isSelected) rowFg else skin.vfd.phosphorDim,
                       )
@@ -439,6 +456,8 @@ fun LibraryBrowserView(
                     BeveledButton(
                       label = "▶",
                       onClick = { onPlayPlaylist(pl) },
+                      spriteNormal = skin.sprites.mobileRowPlayNormal,
+                      spritePressed = skin.sprites.mobileRowPlayPressed,
                       modifier = Modifier.size(width = 32.dp, height = 28.dp),
                       contentPadding = PaddingValues(0.dp),
                     )
@@ -446,9 +465,13 @@ fun LibraryBrowserView(
                     BeveledButton(
                       label = "+",
                       onClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        if (hapticFeedbackEnabled) {
+                          haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
                         onEnqueuePlaylist(pl)
                       },
+                      spriteNormal = skin.sprites.mobileRowEnqueueNormal,
+                      spritePressed = skin.sprites.mobileRowEnqueuePressed,
                       modifier = Modifier.size(width = 32.dp, height = 28.dp),
                       contentPadding = PaddingValues(0.dp),
                     )
@@ -482,7 +505,9 @@ fun LibraryBrowserView(
           BeveledButton(
             label = "+ QUEUE$countSuffix",
             onClick = {
-              haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+              if (hapticFeedbackEnabled) {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+              }
               onEnqueuePrimarySelection()
             },
             modifier = Modifier.weight(1.2f).height(32.dp),

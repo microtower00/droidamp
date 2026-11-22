@@ -8,11 +8,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.droidamp.player.domain.model.TimeDisplayMode
 import com.droidamp.player.skin.LocalDroidAmpSkin
@@ -49,6 +52,54 @@ fun SevenSegmentClock(
         .semantics { contentDescription = "Track timer $formatted" }
         .clickable(role = Role.Button, onClick = onToggleMode),
   ) {
+    val digitSprites = skin.sprites.clockDigits
+    if (digitSprites.size >= 10) {
+      val h = size.height
+      val padY = h * 0.10f
+      val digitH = (h - padY * 2f).toInt().coerceAtLeast(1)
+      val digitW = ((digitH * 9f) / 13f).toInt().coerceAtLeast(1)
+      val gap = (digitW * 0.14f).toInt().coerceAtLeast(1)
+      val colonW = (digitW * 0.34f).toInt().coerceAtLeast(3)
+      val totalW = digitW * 5 + colonW + gap * 5
+      var x = ((size.width - totalW) * 0.5f).toInt().coerceAtLeast(0)
+      val topY = padY.toInt()
+
+      // Optional minus/blank slot
+      val signSprite =
+        if (isRemaining && digitSprites.size >= 12) {
+          digitSprites[11]
+        } else if (digitSprites.size >= 11) {
+          digitSprites[10]
+        } else {
+          null
+        }
+      if (signSprite != null) {
+        drawImage(
+          image = signSprite,
+          dstOffset = IntOffset(x, topY),
+          dstSize = IntSize(digitW, digitH),
+          filterQuality = FilterQuality.None,
+        )
+      }
+      x += digitW + gap
+
+      drawImage(digitSprites[minutes / 10], dstOffset = IntOffset(x, topY), dstSize = IntSize(digitW, digitH), filterQuality = FilterQuality.None)
+      x += digitW + gap
+      drawImage(digitSprites[minutes % 10], dstOffset = IntOffset(x, topY), dstSize = IntSize(digitW, digitH), filterQuality = FilterQuality.None)
+      x += digitW + gap
+
+      val dotRadius = (digitH * 0.08f).coerceAtLeast(1.8f)
+      val colonX = x + colonW * 0.5f
+      drawCircle(skin.vfd.phosphorPrimary, radius = dotRadius, center = Offset(colonX, padY + digitH * 0.30f))
+      drawCircle(skin.vfd.phosphorPrimary, radius = dotRadius, center = Offset(colonX, padY + digitH * 0.70f))
+      x += colonW + gap
+
+      drawImage(digitSprites[seconds / 10], dstOffset = IntOffset(x, topY), dstSize = IntSize(digitW, digitH), filterQuality = FilterQuality.None)
+      x += digitW + gap
+      drawImage(digitSprites[seconds % 10], dstOffset = IntOffset(x, topY), dstSize = IntSize(digitW, digitH), filterQuality = FilterQuality.None)
+      return@Canvas
+    }
+
     val activeColor = skin.vfd.phosphorPrimary
     val unlitColor = skin.vfd.segmentUnlit
     val h = size.height
