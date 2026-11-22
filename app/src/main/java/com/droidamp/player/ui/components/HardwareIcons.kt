@@ -7,21 +7,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.droidamp.player.domain.model.PlaybackStatus
 import com.droidamp.player.skin.LocalDroidAmpSkin
-
-enum class TransportIconType {
-  PREV,
-  PLAY,
-  PAUSE,
-  STOP,
-  NEXT,
-  EJECT,
-}
+import com.droidamp.player.skin.TransportIconType
 
 /**
  * Pixel-aligned classic Winamp carved hardware transport glyphs (`cbuttons.bmp` equivalent).
@@ -57,6 +52,27 @@ fun VfdStatusGlyph(
   glyphSize: Dp = 11.dp,
 ) {
   val skin = LocalDroidAmpSkin.current
+  val statusSprite =
+    when (status) {
+      PlaybackStatus.PLAYING -> skin.sprites.vfdPlayIcon
+      PlaybackStatus.PAUSED -> skin.sprites.vfdPauseIcon
+      PlaybackStatus.STOPPED -> skin.sprites.vfdStopIcon
+    }
+  if (statusSprite != null) {
+    Canvas(modifier = modifier.size(glyphSize)) {
+      val side = minOf(size.width, size.height).toInt().coerceAtLeast(1)
+      val ox = ((size.width - side) * 0.5f).toInt()
+      val oy = ((size.height - side) * 0.5f).toInt()
+      drawImage(
+        image = statusSprite,
+        dstOffset = IntOffset(ox, oy),
+        dstSize = IntSize(side, side),
+        filterQuality = FilterQuality.None,
+      )
+    }
+    return
+  }
+
   val activeColor =
     when (status) {
       PlaybackStatus.PLAYING -> skin.vfd.phosphorPrimary

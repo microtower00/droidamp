@@ -23,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -41,6 +42,9 @@ import com.droidamp.player.domain.model.PlaylistSortOrder
 import com.droidamp.player.domain.model.SavedPlaylistEntry
 import com.droidamp.player.domain.model.SheetMode
 import com.droidamp.player.skin.LocalDroidAmpSkin
+import com.droidamp.player.skin.SkinEntry
+import com.droidamp.player.skin.SkinRenderMode
+import com.droidamp.player.skin.SkinSettingsState
 import com.droidamp.player.ui.components.BeveledLedToggleButton
 import com.droidamp.player.ui.components.ChassisTitleBar
 import com.droidamp.player.ui.components.HardwarePanel
@@ -68,6 +72,8 @@ fun UnifiedQueueLibraryPanel(
   libraryViewLevel: LibraryViewLevel,
   folderContents: FolderContents,
   playlists: List<SavedPlaylistEntry>,
+  availableSkins: List<SkinEntry>,
+  activeSkinId: String,
   selectedLibraryTrackIds: Set<String>,
   selectedPlaylistId: String?,
   libraryFeedbackBanner: String?,
@@ -101,6 +107,9 @@ fun UnifiedQueueLibraryPanel(
   onOpenLibraryRoot: () -> Unit,
   onOpenLibraryFolders: () -> Unit,
   onOpenLibraryPlaylists: () -> Unit,
+  onOpenLibrarySkins: () -> Unit,
+  onSelectSkin: (String) -> Unit,
+  onImportSkinClick: () -> Unit,
   onNavigateUp: () -> Unit,
   onOpenFolder: (FolderEntry) -> Unit,
   onPlayFolder: (FolderEntry) -> Unit,
@@ -123,6 +132,10 @@ fun UnifiedQueueLibraryPanel(
   onNext: () -> Unit,
   modifier: Modifier = Modifier,
   onMoveTrack: (fromIndex: Int, toIndex: Int) -> Unit = { _, _ -> },
+  skinSettings: SkinSettingsState = SkinSettingsState(),
+  onSetLegacyRenderMode: (SkinRenderMode) -> Unit = {},
+  onSetAutoContrastGuard: (Boolean) -> Unit = {},
+  onDeleteImportedSkin: (SkinEntry) -> Unit = {},
 ) {
   val skin = LocalDroidAmpSkin.current
   val scope = rememberCoroutineScope()
@@ -163,6 +176,11 @@ fun UnifiedQueueLibraryPanel(
       }
     }
 
+  val latestOnDragDelta by rememberUpdatedState(onDragDelta)
+  val latestOnDragFinished by rememberUpdatedState(onDragFinished)
+  val latestCanPullDownToCollapse by rememberUpdatedState(canPullDownToCollapse)
+  val latestIsMidPan by rememberUpdatedState(isMidPan)
+
   // Pull-down at scroll-top + mid-pan direction-reversal lock (ADR-024)
   val pullDownNestedScroll =
     remember {
@@ -175,10 +193,10 @@ fun UnifiedQueueLibraryPanel(
         ): Offset {
           // If the stereo tower is mid-pan, keep BOTH up & down deltas locked to the pan
           // so reversing direction mid-gesture never freezes the tower or scrolls the inner list.
-          if (source == NestedScrollSource.UserInput && isMidPan() && available.y != 0f) {
+          if (source == NestedScrollSource.UserInput && latestIsMidPan() && available.y != 0f) {
             activeNestedPan = true
             dragAccum += available.y
-            onDragDelta(available.y)
+            latestOnDragDelta(available.y)
             return Offset(0f, available.y)
           }
           return Offset.Zero
@@ -189,10 +207,10 @@ fun UnifiedQueueLibraryPanel(
           available: Offset,
           source: NestedScrollSource,
         ): Offset {
-          if (source == NestedScrollSource.UserInput && available.y > 0f && canPullDownToCollapse()) {
+          if (source == NestedScrollSource.UserInput && available.y > 0f && latestCanPullDownToCollapse()) {
             activeNestedPan = true
             dragAccum += available.y
-            onDragDelta(available.y)
+            latestOnDragDelta(available.y)
             return Offset(0f, available.y)
           }
           return Offset.Zero
@@ -206,7 +224,7 @@ fun UnifiedQueueLibraryPanel(
             val total = dragAccum
             dragAccum = 0f
             activeNestedPan = false
-            onDragFinished(total)
+            latestOnDragFinished(total)
           }
           return Velocity.Zero
         }
@@ -223,20 +241,27 @@ fun UnifiedQueueLibraryPanel(
         } else {
           "DROIDAMP LIBRARY $arrow"
         }
+      val drawerHeaderSprite =
+        if (isExpanded) {
+          skin.sprites.drawerHeaderExpandedSprite
+        } else {
+          skin.sprites.drawerHeaderCollapsedSprite
+        }
       ChassisTitleBar(
         title = title,
         showDragGrip = true,
+        customSprite = drawerHeaderSprite.takeIf { skin.sprites.hasCompletePanelHeaders },
         modifier =
           Modifier
             .pointerInput(Unit) {
               var totalDrag = 0f
               detectVerticalDragGestures(
                 onDragStart = { totalDrag = 0f },
-                onDragEnd = { onDragFinished(totalDrag) },
-                onDragCancel = { onDragFinished(totalDrag) },
+                onDragEnd = { latestOnDragFinished(totalDrag) },
+                onDragCancel = { latestOnDragFinished(totalDrag) },
               ) { _, dragAmount ->
                 totalDrag += dragAmount
-                onDragDelta(dragAmount)
+                latestOnDragDelta(dragAmount)
               }
             }
             .clickable(onClick = onToggleExpand),
@@ -302,6 +327,8 @@ fun UnifiedQueueLibraryPanel(
                 libraryViewLevel = libraryViewLevel,
                 folderContents = folderContents,
                 playlists = playlists,
+                availableSkins = availableSkins,
+                activeSkinId = activeSkinId,
                 selectedTrackIds = selectedLibraryTrackIds,
                 selectedPlaylistId = selectedPlaylistId,
                 queueCountByTrackId = queueCountByTrackId,
@@ -310,6 +337,9 @@ fun UnifiedQueueLibraryPanel(
                 onOpenLibraryRoot = onOpenLibraryRoot,
                 onOpenLibraryFolders = onOpenLibraryFolders,
                 onOpenLibraryPlaylists = onOpenLibraryPlaylists,
+                onOpenLibrarySkins = onOpenLibrarySkins,
+                onSelectSkin = onSelectSkin,
+                onImportSkinClick = onImportSkinClick,
                 onNavigateUp = onNavigateUp,
                 onOpenFolder = onOpenFolder,
                 onPlayFolder = onPlayFolder,
@@ -325,6 +355,10 @@ fun UnifiedQueueLibraryPanel(
                 onPlayPrimarySelection = onPlayPrimaryLibrarySelection,
                 onEnqueuePrimarySelection = onEnqueuePrimaryLibrarySelection,
                 onClearSelection = onClearLibrarySelection,
+                skinSettings = skinSettings,
+                onSetLegacyRenderMode = onSetLegacyRenderMode,
+                onSetAutoContrastGuard = onSetAutoContrastGuard,
+                onDeleteImportedSkin = onDeleteImportedSkin,
               )
             }
           }
@@ -348,6 +382,8 @@ fun UnifiedQueueLibraryPanel(
               onSwitchSheetMode(SheetMode.PLAYLIST)
               scope.launch { pagerState.animateScrollToPage(0) }
             },
+            spriteOff = skin.sprites.mobileTabQueueOff,
+            spriteOn = skin.sprites.mobileTabQueueOn,
             modifier = Modifier.weight(1f).height(30.dp),
           )
           BeveledLedToggleButton(
@@ -357,6 +393,8 @@ fun UnifiedQueueLibraryPanel(
               onSwitchSheetMode(SheetMode.LIBRARY)
               scope.launch { pagerState.animateScrollToPage(1) }
             },
+            spriteOff = skin.sprites.mobileTabLibraryOff,
+            spriteOn = skin.sprites.mobileTabLibraryOn,
             modifier = Modifier.weight(1f).height(30.dp),
           )
         }

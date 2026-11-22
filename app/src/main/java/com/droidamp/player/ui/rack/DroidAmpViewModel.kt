@@ -4,8 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.droidamp.player.domain.contract.AudioEngineController
 import com.droidamp.player.domain.contract.AutoEqPresetResolver
+import com.droidamp.player.domain.contract.AutoEqRule
+import com.droidamp.player.domain.contract.EqfCodec
 import com.droidamp.player.domain.contract.MusicSourceRepository
 import com.droidamp.player.domain.contract.PlaylistFileCodec
+import com.droidamp.player.domain.contract.Q2Codec
+import com.droidamp.player.domain.contract.WinampIniCodec
 import com.droidamp.player.domain.model.AudioTrack
 import com.droidamp.player.domain.model.ClassicWinampPresets
 import com.droidamp.player.domain.model.EqPreset
@@ -16,14 +20,28 @@ import com.droidamp.player.domain.model.LibraryViewLevel
 import com.droidamp.player.domain.model.PlaybackState
 import com.droidamp.player.domain.model.PlaylistExportFormat
 import com.droidamp.player.domain.model.PlaylistSortOrder
+import com.droidamp.player.domain.model.RepeatMode
+import com.droidamp.player.domain.model.ReplayGainMode
 import com.droidamp.player.domain.model.SavedPlaylistEntry
 import com.droidamp.player.domain.model.SheetMode
 import com.droidamp.player.domain.model.StorageBackend
+import com.droidamp.player.domain.model.TimeDisplayMode
 import com.droidamp.player.domain.model.VisualizerFrame
 import com.droidamp.player.domain.model.WinampEqSpec
 import com.droidamp.player.interop.AutoEqMatcher
+import com.droidamp.player.interop.BinaryEqfCodec
+import com.droidamp.player.interop.DetectedWinampFormat
+import com.droidamp.player.interop.WinampIniParser
 import com.droidamp.player.interop.WinampPlaylistCodec
 import com.droidamp.player.interop.WinampPresetLibrary
+import com.droidamp.player.interop.WinampQ2Codec
+import com.droidamp.player.skin.DroidAmpSkin
+import com.droidamp.player.skin.SkinEntry
+import com.droidamp.player.skin.SkinRecoveryNotice
+import com.droidamp.player.skin.SkinRenderMode
+import com.droidamp.player.skin.SkinRepository
+import com.droidamp.player.skin.SkinSettingsState
+import com.droidamp.player.skin.StaticSkinRepository
 import com.droidamp.player.ui.sheet.PlaylistMicroMenu
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -34,10 +52,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.CodingErrorAction
+import java.util.Locale
+
+private val DRIVE_OR_SCHEME_PREFIX_REGEX =
+  Regex("^(?:[a-zA-Z][a-zA-Z0-9+.-]*://[^/]*|[a-zA-Z]:)")
 
 data class RackUiState(
   val isEqVisible: Boolean = true,
@@ -68,21 +92,34 @@ class DroidAmpViewModel(
   private val autoEqResolver: AutoEqPresetResolver = AutoEqMatcher(),
   private val playlistCodec: PlaylistFileCodec = WinampPlaylistCodec(),
   private val autoEqCatalogProvider: AutoEqCatalogProvider = EmptyAutoEqCatalogProvider,
+  private val skinRepository: SkinRepository = StaticSkinRepository(),
+  private val eqfCodec: EqfCodec = BinaryEqfCodec(),
+  private val q2Codec: Q2Codec = WinampQ2Codec(),
+  private val iniCodec: WinampIniCodec = WinampIniParser(),
 ) : ViewModel() {
 
   private data class AutoEqTriggerKey(
     val track: AudioTrack?,
     val autoEnabled: Boolean,
     val rootUris: List<String>,
+    val importedPresets: List<EqPreset>,
+    val importedRules: List<AutoEqRule>,
   )
 
   val playbackState: StateFlow<PlaybackState> = audioEngine.playbackState
   val visualizerFrame: StateFlow<VisualizerFrame> = audioEngine.visualizerFrame
   val linkedRoots: StateFlow<List<FolderEntry>> = musicRepository.linkedRoots
   val storageBackend: StateFlow<StorageBackend> = musicRepository.storageBackend
+  val availableSkins: StateFlow<List<SkinEntry>> = skinRepository.availableSkins
+  val activeSkin: StateFlow<DroidAmpSkin> = skinRepository.activeSkin
+  val skinSettings: StateFlow<SkinSettingsState> = skinRepository.skinSettings
+  val skinRecoveryNotice: StateFlow<SkinRecoveryNotice?> = skinRepository.recoveryNotice
 
   private val _uiState = MutableStateFlow(RackUiState())
   val uiState: StateFlow<RackUiState> = _uiState.asStateFlow()
+
+  private val importedEqPresets = MutableStateFlow<List<EqPreset>>(emptyList())
+  private val importedAutoEqRules = MutableStateFlow<List<AutoEqRule>>(emptyList())
 
   private var libraryFeedbackJob: Job? = null
   private var autoEqFeedbackJob: Job? = null
@@ -100,8 +137,8 @@ class DroidAmpViewModel(
       musicRepository.linkedRoots
         .map { roots -> roots.map { it.uriString } }
         .distinctUntilChanged()
-        .drop(1)
-        .collect {
+        .collect { rootUris ->
+          skinRepository.refreshSkins(rootUris)
           refreshLibraryFromCurrentRoot()
         }
     }
@@ -120,8 +157,16 @@ class DroidAmpViewModel(
         musicRepository.linkedRoots
           .map { roots -> roots.map { it.uriString } }
           .distinctUntilChanged(),
-      ) { (track, autoEnabled), rootUris ->
-        AutoEqTriggerKey(track = track, autoEnabled = autoEnabled, rootUris = rootUris)
+        importedEqPresets,
+        importedAutoEqRules,
+      ) { (track, autoEnabled), rootUris, extraImportedPresets, extraImportedRules ->
+        AutoEqTriggerKey(
+          track = track,
+          autoEnabled = autoEnabled,
+          rootUris = rootUris,
+          importedPresets = extraImportedPresets,
+          importedRules = extraImportedRules,
+        )
       }.collectLatest { trigger ->
         val catalog =
           try {
@@ -131,8 +176,13 @@ class DroidAmpViewModel(
           } catch (_: Throwable) {
             AutoEqCatalog()
           }
-        val mergedPresets =
+        val baseMerged =
           WinampPresetLibrary.mergePresets(catalog.extraPresets, ClassicWinampPresets.ALL)
+        val mergedPresets =
+          mergePresetsPreferringIncoming(
+            existing = baseMerged,
+            incoming = trigger.importedPresets,
+          )
         _uiState.update { it.copy(availableEqPresets = mergedPresets) }
 
         val track = trigger.track ?: return@collectLatest
@@ -146,8 +196,12 @@ class DroidAmpViewModel(
           return@collectLatest
         }
 
+        val combinedRules =
+          (trigger.importedRules + catalog.rules).distinctBy {
+            "${it.pattern.lowercase(Locale.ROOT)}|${it.preset.name.lowercase(Locale.ROOT)}"
+          }
         val matched =
-          autoEqResolver.resolveForTrack(track, catalog.rules, mergedPresets) ?: return@collectLatest
+          autoEqResolver.resolveForTrack(track, combinedRules, mergedPresets) ?: return@collectLatest
         val currentEq = latest.equalizer
         val clampedPreamp = WinampEqSpec.clampDb(matched.preampDb)
         val clampedBands = matched.bandsDb.map(WinampEqSpec::clampDb)
@@ -315,7 +369,7 @@ class DroidAmpViewModel(
             openLibraryRoot()
           }
         }
-        LibraryViewLevel.PLAYLISTS -> openLibraryRoot()
+        LibraryViewLevel.PLAYLISTS, LibraryViewLevel.SKINS -> openLibraryRoot()
         LibraryViewLevel.ROOT -> collapseSheet()
       }
     } else {
@@ -353,6 +407,467 @@ class DroidAmpViewModel(
         selectedLibraryPlaylistId = null,
       )
     }
+  }
+
+  fun openLibrarySkins() {
+    skinRepository.refreshSkins(linkedRoots.value.map { it.uriString })
+    _uiState.update {
+      it.copy(
+        libraryViewLevel = LibraryViewLevel.SKINS,
+        selectedLibraryTrackIds = emptySet(),
+        selectedLibraryPlaylistId = null,
+      )
+    }
+  }
+
+  fun selectSkin(skinId: String) {
+    skinRepository.selectSkin(skinId)
+    val label = availableSkins.value.firstOrNull { it.id == skinId }?.displayName ?: skinId
+    showLibraryBanner("SKIN: ${label.uppercase()}")
+  }
+
+  fun importSkinFromUri(uriString: String) {
+    viewModelScope.launch {
+      skinRepository.importSkinFromUri(uriString)
+        .onSuccess { entry ->
+          if (entry != null) {
+            showLibraryBanner("IMPORTED SKIN: ${entry.displayName.uppercase()}")
+          }
+          // When entry == null, skinRepository.recoveryNotice drives SkinRecoveryDialog!
+        }
+        .onFailure { error ->
+          showLibraryBanner("SKIN IMPORT FAILED: ${error.message?.take(36)?.uppercase() ?: "INVALID .WSZ"}")
+        }
+    }
+  }
+
+  fun setLegacySkinRenderMode(mode: SkinRenderMode) {
+    skinRepository.setLegacyRenderMode(mode)
+    val label =
+      if (mode == SkinRenderMode.CLASSIC_RAW_BMP) {
+        "LEGACY .WSZ: RAW BMP SPRITES"
+      } else {
+        "LEGACY .WSZ: VECTOR CHROME"
+      }
+    showLibraryBanner(label)
+  }
+
+  fun setAutoContrastGuard(enabled: Boolean) {
+    skinRepository.setAutoContrastGuard(enabled)
+    showLibraryBanner(if (enabled) "CONTRAST GUARD: ON" else "CONTRAST GUARD: RAW OG")
+  }
+
+  fun deleteImportedSkin(entry: SkinEntry) {
+    if (!entry.source.canDelete) return
+    viewModelScope.launch {
+      val deleted = skinRepository.deleteImportedSkin(entry.id)
+      if (deleted) {
+        showLibraryBanner("DELETED SKIN: ${entry.displayName.uppercase()}")
+      }
+    }
+  }
+
+  fun dismissSkinRecoveryNotice() {
+    skinRepository.dismissRecoveryNotice()
+  }
+
+  fun retrySafeBootSkin(skinId: String) {
+    skinRepository.retrySafeBootSkin(skinId)
+  }
+
+  fun revertPartialSkin(previousSkinId: String) {
+    skinRepository.revertToSkin(previousSkinId)
+    skinRepository.dismissRecoveryNotice()
+  }
+
+  fun useRawOgColorsForSkin(skinId: String) {
+    skinRepository.setSkinRawColorsOverride(skinId, true)
+    skinRepository.dismissRecoveryNotice()
+    showLibraryBanner("APPLIED RAW OG PALETTE")
+  }
+
+  fun resolveDuplicateSkinImport(
+    conflict: SkinRecoveryNotice.DuplicateSkinConflict,
+    replaceExisting: Boolean,
+  ) {
+    viewModelScope.launch {
+      skinRepository.resolveDuplicateImport(conflict, replaceExisting)
+        .onSuccess { entry ->
+          val prefix = if (replaceExisting) "REPLACED SKIN" else "IMPORTED SKIN"
+          showLibraryBanner("$prefix: ${entry.displayName.uppercase()}")
+        }
+        .onFailure { error ->
+          showLibraryBanner(
+            "SKIN IMPORT FAILED: ${error.message?.take(36)?.uppercase() ?: "INVALID .WSZ"}",
+          )
+        }
+    }
+  }
+
+  fun confirmWrongSlotRedirect(notice: SkinRecoveryNotice.WrongSlotFileDetected) {
+    when (notice.detectedFormat) {
+      DetectedWinampFormat.EqfSinglePreset -> {
+        runCatching { eqfCodec.parseSingleEqf(notice.rawBytes) }
+          .onSuccess { parsed ->
+            val fallbackName =
+              notice.fileName.substringBeforeLast('.').trim().ifEmpty { "Imported Preset" }
+            val preset = if (parsed.name.isBlank()) parsed.copy(name = fallbackName) else parsed
+            importedEqPresets.update { existing ->
+              mergePresetsPreferringIncoming(existing, listOf(preset))
+            }
+            val banner = "APPLIED EQ PRESET: ${preset.name.uppercase()}"
+            _uiState.update { state ->
+              state.copy(
+                availableEqPresets =
+                  mergePresetsPreferringIncoming(state.availableEqPresets, listOf(preset)),
+                statusBanner = banner,
+              )
+            }
+            audioEngine.applyEqPreset(preset)
+            showLibraryBanner(banner)
+            skinRepository.dismissRecoveryNotice()
+          }
+          .onFailure { error ->
+            val banner = "EQF IMPORT FAILED: ${error.message?.take(36)?.uppercase() ?: "CORRUPT .EQF"}"
+            _uiState.update { it.copy(statusBanner = banner) }
+            showLibraryBanner(banner)
+            skinRepository.dismissRecoveryNotice()
+          }
+      }
+
+      DetectedWinampFormat.EqLibraryQ1 -> {
+        runCatching { eqfCodec.parsePresetLibraryQ1(notice.rawBytes) }
+          .onSuccess { rawPresets ->
+            val presets =
+              rawPresets.mapIndexed { idx, preset ->
+                if (preset.name.isBlank()) preset.copy(name = "Preset ${idx + 1}") else preset
+              }
+            importedEqPresets.update { existing ->
+              mergePresetsPreferringIncoming(existing, presets)
+            }
+            val banner = "LOADED ${presets.size} PRESETS (.Q1)"
+            _uiState.update { state ->
+              state.copy(
+                availableEqPresets =
+                  mergePresetsPreferringIncoming(state.availableEqPresets, presets),
+                statusBanner = banner,
+              )
+            }
+            presets.firstOrNull()?.let(audioEngine::applyEqPreset)
+            showLibraryBanner(banner)
+            skinRepository.dismissRecoveryNotice()
+          }
+          .onFailure { error ->
+            val banner = "Q1 IMPORT FAILED: ${error.message?.take(36)?.uppercase() ?: "CORRUPT .Q1"}"
+            _uiState.update { it.copy(statusBanner = banner) }
+            showLibraryBanner(banner)
+            skinRepository.dismissRecoveryNotice()
+          }
+      }
+
+      DetectedWinampFormat.AutoEqQ2 -> {
+        runCatching { q2Codec.parseAutoPresetsQ2(notice.rawBytes) }
+          .onSuccess { rules ->
+            importedAutoEqRules.update { existing ->
+              (rules + existing).distinctBy {
+                "${it.pattern.lowercase(Locale.ROOT)}|${it.preset.name.lowercase(Locale.ROOT)}"
+              }
+            }
+            val banner = "LOADED ${rules.size} AUTO-EQ RULES (.Q2)"
+            _uiState.update { it.copy(statusBanner = banner) }
+            showLibraryBanner(banner)
+            skinRepository.dismissRecoveryNotice()
+          }
+          .onFailure { error ->
+            val banner = "Q2 IMPORT FAILED: ${error.message?.take(36)?.uppercase() ?: "CORRUPT .Q2"}"
+            _uiState.update { it.copy(statusBanner = banner) }
+            showLibraryBanner(banner)
+            skinRepository.dismissRecoveryNotice()
+          }
+      }
+
+      DetectedWinampFormat.WinampIni -> {
+        runCatching {
+          val iniText = decodeTextBytes(notice.rawBytes)
+          iniCodec.parse(iniText)
+        }.onSuccess { snapshot ->
+          audioEngine.setVolume(snapshot.volume)
+          audioEngine.setBalance(snapshot.pan)
+          if (playbackState.value.shuffle != snapshot.shuffle) {
+            audioEngine.toggleShuffle()
+          }
+          val targetRepeat = if (snapshot.repeat) RepeatMode.ALL else RepeatMode.OFF
+          repeat(3) {
+            if (playbackState.value.repeatMode != targetRepeat) {
+              audioEngine.cycleRepeatMode()
+            }
+          }
+          val targetTimeMode =
+            if (snapshot.timeRemaining) TimeDisplayMode.REMAINING else TimeDisplayMode.ELAPSED
+          if (playbackState.value.timeDisplayMode != targetTimeMode) {
+            audioEngine.toggleTimeDisplayMode()
+          }
+          audioEngine.setEqEnabled(snapshot.eqEnabled)
+          audioEngine.setEqAutoEnabled(snapshot.eqAuto)
+          audioEngine.setPreampDb(snapshot.eqPreampDb)
+          snapshot.eqBandsDb.take(WinampEqSpec.BAND_COUNT).forEachIndexed { idx, db ->
+            audioEngine.setEqBandDb(idx, db)
+          }
+          val mappedRgMode =
+            when (snapshot.replayGainMode) {
+              1 -> ReplayGainMode.TRACK
+              2 -> ReplayGainMode.ALBUM
+              else -> ReplayGainMode.OFF
+            }
+          val currentDsp = audioEngine.dspSettings.value
+          audioEngine.setDspSettings(
+            currentDsp
+              .copy(
+                replayGainMode = mappedRgMode,
+                replayGainPreampDb = snapshot.replayGainPreampDb,
+                crossfadeSeconds = snapshot.crossfadeSeconds,
+              ).sanitized(),
+          )
+          val banner = "APPLIED WINAMP.INI SETTINGS"
+          _uiState.update { it.copy(statusBanner = banner) }
+          showLibraryBanner(banner)
+          skinRepository.dismissRecoveryNotice()
+        }.onFailure { error ->
+          val banner = "INI IMPORT FAILED: ${error.message?.take(36)?.uppercase() ?: "INVALID .INI"}"
+          _uiState.update { it.copy(statusBanner = banner) }
+          showLibraryBanner(banner)
+          skinRepository.dismissRecoveryNotice()
+        }
+      }
+
+      DetectedWinampFormat.PlaylistM3u,
+      DetectedWinampFormat.PlaylistPls,
+      -> {
+        val isM3u = notice.detectedFormat == DetectedWinampFormat.PlaylistM3u
+        skinRepository.dismissRecoveryNotice()
+        viewModelScope.launch {
+          val text = decodeTextBytes(notice.rawBytes)
+          val rawEntries =
+            runCatching {
+              if (isM3u) playlistCodec.parseM3u(text) else playlistCodec.parsePls(text)
+            }.getOrDefault(emptyList())
+          val localTracks = collectAllAvailableLocalTracks()
+          val resolvedTracks = matchPlaylistEntriesToLocalTracks(rawEntries, localTracks)
+          if (resolvedTracks.isNotEmpty()) {
+            audioEngine.replaceQueue(resolvedTracks, startIndex = 0, autoPlay = true)
+            val banner = "LOADED PLAYLIST: ${resolvedTracks.size} TRACKS"
+            _uiState.update {
+              it.copy(
+                sheetMode = SheetMode.PLAYLIST,
+                selectedPlaylistIndices = emptySet(),
+                selectedLibraryTrackIds = emptySet(),
+                statusBanner = banner,
+              )
+            }
+            showLibraryBanner(banner)
+          } else {
+            val banner = "PLAYLIST PARSED — NO MATCHING LOCAL TRACKS"
+            _uiState.update { it.copy(statusBanner = banner) }
+            showLibraryBanner(banner)
+          }
+        }
+      }
+
+      is DetectedWinampFormat.WszSkin,
+      is DetectedWinampFormat.Unsupported,
+      -> {
+        skinRepository.dismissRecoveryNotice()
+      }
+    }
+  }
+
+  private suspend fun collectAllAvailableLocalTracks(): List<AudioTrack> {
+    val byId = LinkedHashMap<String, AudioTrack>()
+    for (root in musicRepository.linkedRoots.value) {
+      val rootTracks =
+        runCatching {
+          musicRepository.resolveFolderTracks(root.uriString, recursive = true)
+        }.getOrDefault(emptyList())
+      for (track in rootTracks) {
+        byId.putIfAbsent(track.id, track)
+      }
+      if (rootTracks.isEmpty()) {
+        collectTracksByBrowsing(root.uriString, depth = 0, visited = HashSet(), out = byId)
+      }
+    }
+    if (byId.isEmpty()) {
+      collectTracksByBrowsing(null, depth = 0, visited = HashSet(), out = byId)
+    }
+    for (track in playbackState.value.queue) {
+      byId.putIfAbsent(track.id, track)
+    }
+    return byId.values.toList()
+  }
+
+  private suspend fun collectTracksByBrowsing(
+    folderUri: String?,
+    depth: Int,
+    visited: MutableSet<String>,
+    out: LinkedHashMap<String, AudioTrack>,
+  ) {
+    if (depth > 6) return
+    val key = folderUri ?: "<root>"
+    if (!visited.add(key)) return
+    val contents = runCatching { musicRepository.browseFolder(folderUri) }.getOrNull() ?: return
+    for (track in contents.tracks) {
+      out.putIfAbsent(track.id, track)
+    }
+    for (sub in contents.folders) {
+      val resolved =
+        runCatching {
+          musicRepository.resolveFolderTracks(sub.uriString, recursive = true)
+        }.getOrDefault(emptyList())
+      if (resolved.isNotEmpty()) {
+        for (track in resolved) {
+          out.putIfAbsent(track.id, track)
+        }
+      } else {
+        collectTracksByBrowsing(sub.uriString, depth + 1, visited, out)
+      }
+    }
+  }
+
+  private fun matchPlaylistEntriesToLocalTracks(
+    rawEntries: List<String>,
+    localTracks: List<AudioTrack>,
+  ): List<AudioTrack> {
+    if (rawEntries.isEmpty() || localTracks.isEmpty()) return emptyList()
+
+    data class IndexedCandidate(
+      val track: AudioTrack,
+      val uriLower: String,
+      val decodedUriLower: String,
+      val relativePathLower: String,
+      val fileNameLower: String,
+    )
+
+    val candidates =
+      localTracks.map { track ->
+        val folderNorm = track.folderPath.replace('\\', '/').trim('/')
+        val fileNorm = track.fileName.replace('\\', '/').trim('/')
+        val rel =
+          listOf(folderNorm, fileNorm)
+            .filter { it.isNotEmpty() }
+            .joinToString("/")
+            .lowercase(Locale.ROOT)
+        IndexedCandidate(
+          track = track,
+          uriLower = track.uriString.trim().lowercase(Locale.ROOT),
+          decodedUriLower = percentDecodeSafe(track.uriString).replace('\\', '/').lowercase(Locale.ROOT),
+          relativePathLower = rel,
+          fileNameLower = fileNorm.lowercase(Locale.ROOT),
+        )
+      }
+
+    val matched = ArrayList<AudioTrack>()
+    for (raw in rawEntries) {
+      val resolvedPath = playlistCodec.resolveEntryPath(raw, "").trim()
+      if (resolvedPath.isEmpty()) continue
+      val rawLower = resolvedPath.lowercase(Locale.ROOT)
+      val cleanNormalized =
+        percentDecodeSafe(resolvedPath)
+          .replace('\\', '/')
+          .replace(DRIVE_OR_SCHEME_PREFIX_REGEX, "")
+          .trim('/')
+          .lowercase(Locale.ROOT)
+      if (cleanNormalized.isEmpty()) continue
+      val entryBaseName = cleanNormalized.substringAfterLast('/')
+
+      val hit =
+        candidates.firstOrNull { it.uriLower == rawLower }
+          ?: candidates.firstOrNull {
+            it.relativePathLower == cleanNormalized ||
+              cleanNormalized.endsWith("/${it.relativePathLower}") ||
+              (cleanNormalized.contains('/') && it.relativePathLower.endsWith("/$cleanNormalized"))
+          }
+          ?: candidates.firstOrNull {
+            it.decodedUriLower.endsWith("/$cleanNormalized") ||
+              it.decodedUriLower.endsWith(":$cleanNormalized")
+          }
+          ?: candidates.firstOrNull {
+            entryBaseName.isNotEmpty() && it.fileNameLower == entryBaseName
+          }
+
+      if (hit != null) {
+        matched.add(hit.track)
+      }
+    }
+    return matched
+  }
+
+  private fun mergePresetsPreferringIncoming(
+    existing: List<EqPreset>,
+    incoming: List<EqPreset>,
+  ): List<EqPreset> {
+    if (incoming.isEmpty()) return existing
+    val merged = LinkedHashMap<String, EqPreset>()
+    for (preset in existing) {
+      val key = preset.name.trim().lowercase(Locale.ROOT)
+      if (key.isNotEmpty()) {
+        merged[key] = preset
+      }
+    }
+    for (preset in incoming) {
+      val key = preset.name.trim().lowercase(Locale.ROOT)
+      if (key.isNotEmpty()) {
+        merged[key] = preset
+      }
+    }
+    return merged.values.toList()
+  }
+
+  private fun decodeTextBytes(bytes: ByteArray): String =
+    try {
+      Charsets.UTF_8
+        .newDecoder()
+        .onMalformedInput(CodingErrorAction.REPORT)
+        .onUnmappableCharacter(CodingErrorAction.REPORT)
+        .decode(ByteBuffer.wrap(bytes))
+        .toString()
+    } catch (_: CharacterCodingException) {
+      String(bytes, Charsets.ISO_8859_1)
+    }
+
+  private fun percentDecodeSafe(input: String): String {
+    if (!input.contains('%')) return input
+    val bytes = ByteArray(input.length)
+    var outLen = 0
+    var i = 0
+    while (i < input.length) {
+      val ch = input[i]
+      if (ch == '%' && i + 2 < input.length) {
+        val hi = Character.digit(input[i + 1], 16)
+        val lo = Character.digit(input[i + 2], 16)
+        if (hi >= 0 && lo >= 0) {
+          bytes[outLen++] = ((hi shl 4) or lo).toByte()
+          i += 3
+          continue
+        }
+      }
+      val utf8 = ch.toString().toByteArray(Charsets.UTF_8)
+      for (b in utf8) {
+        if (outLen < bytes.size) {
+          bytes[outLen++] = b
+        }
+      }
+      i++
+    }
+    return bytes.decodeToString(0, outLen)
+  }
+
+  private fun showLibraryBanner(message: String) {
+    libraryFeedbackJob?.cancel()
+    _uiState.update { it.copy(libraryFeedbackBanner = message) }
+    libraryFeedbackJob =
+      viewModelScope.launch {
+        delay(2_200L)
+        _uiState.update { it.copy(libraryFeedbackBanner = null) }
+      }
   }
 
   fun clearLibrarySelection() {
