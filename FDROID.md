@@ -24,15 +24,15 @@ RepoType: git
 Repo: https://github.com/microtower00/droidamp.git
 
 Builds:
-  - versionName: 0.1.0-alpha.1
-    versionCode: 1
-    commit: v0.1.0-alpha.1
+  - versionName: 0.1.0-alpha.2
+    versionCode: 2
+    commit: v0.1.0-alpha.2
     subdir: app
     gradle:
       - yes
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
-CurrentVersion: 0.1.0-alpha.1
-CurrentVersionCode: 1
+CurrentVersion: 0.1.0-alpha.2
+CurrentVersionCode: 2
 ```

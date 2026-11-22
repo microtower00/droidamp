@@ -8,8 +8,8 @@ plugins {
 val appVersionMajor = 0
 val appVersionMinor = 1
 val appVersionPatch = 0
-val appPreReleaseTag = "alpha.1" // Empty string for stable releases
-val appVersionCode = 1           // Strictly monotonic integer per published build
+val appPreReleaseTag = "alpha.2" // Empty string for stable releases
+val appVersionCode = 2           // Strictly monotonic integer per published build
 val appVersionName =
   if (appPreReleaseTag.isBlank()) {
     "$appVersionMajor.$appVersionMinor.$appVersionPatch"

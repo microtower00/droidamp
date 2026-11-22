@@ -8,7 +8,7 @@ A strictly offline, mobile-first Android local music player inspired by late-199
 - **Pure In-App Winamp Aesthetic**: Late-1990s beveled gunmetal chassis, pitch-black recessed VFD wells, phosphor green readouts, yellow→orange→red spectrum & EQ bars, and 7-segment clock. Zero album art inside the app — embedded/folder artwork is exposed only to Android system media surfaces (lockscreen, notification shade, Bluetooth/Android Auto).
 - **Skin-Ready Architecture (`DroidAmpSkin`)**: Every UI element consumes abstract `DroidAmpSkin` tokens and optional sprite slots so future `.wsz` Winamp 2.x skins plug in cleanly.
 
-## Implemented Features (Milestones 1–4)
+## Implemented Features (Milestones 1–6)
 
 ### Hardware Rack & UX (Milestone 1)
 - **Main Deck**: Recessed VFD visualizer (60fps spectrum analyzer / oscilloscope / off), 7-segment elapsed/remaining clock, scrolling marquee, bitrate/sample-rate/channel telemetry, independent Volume (`0..255`) and Balance (`-127..+127`) sliders, transport deck, Shuffle, and Repeat.
@@ -36,19 +36,28 @@ A strictly offline, mobile-first Android local music player inspired by late-199
   - `.m3u`, `.m3u8`, and `.pls` playlists (with relative/Windows path normalization and live `[LIST] → SAVE .M3U8` export)
 - 18 classic built-in Winamp EQ presets.
 
+### Augmented `.wsz` Skin Engine (Milestone 5)
+- Universal `.wsz` archive parser (`WszArchiveParser`, `WszSkinLoader`, `ViscolorParser`, `PleditParser`) supporting Legacy 1999 Winamp 2.x `.wsz` skins (Smart Vector-Chrome default + optional Classic BMP Sprites mode) and Augmented `.wsz` containers (`droidamp.json` + alpha-PNG `sprites/` + dual-state drawer header), plus `tools/wsz-augment/` CLI converter.
+- `WszContrastGuard` legibility protection, safe-boot skin recovery dialogs, `DroidAmpFileSniffer` format detection, and 2 built-in Augmented showcase skins (`amber_hifi_rack.wsz`, `cyber_ice_99.wsz`) alongside `DroidAmp Classic`.
+
+### Settings UI, Winamp Migration & UX Polish (Milestone 6)
+- Skin-aware beveled Settings rack (`SettingsScreen`, 2-column `SkinBrowserScreen`, `ManageFoldersScreen`, `EqPresetsSettingsScreen`, `WinampMigrationScreen`, `AboutDroidAmpScreen`) with `[OG]` badges and dual entry points.
+- Full `.ini`, `.q1`, `.q2`, and `.eqf` import/export migration with preview dialogs, Music Source switching (`All Device Music` vs. `Selected Folders`) backed by `LibraryMetadataCache`, Hardware Volume Key sync (`SystemAudioBridge`), 3-way Track Transition (`Standard` / `Gapless` / `Crossfade`), and portrait orientation lock.
+- 1-click on-deck EQ `PRESETS` menu with inline preset naming, double-tap resets (`0 dB` EQ bands/preamp, `CTR` balance), deterministic queue-order shuffle, revertible `Low Latency` Audio Buffer toggle, and multi-select queue reorder grip.
+
 ## Roadmap
 
 - [x] **Milestone 1**: `DroidAmpSkin` contract, shared domain contracts, skeuomorphic hardware rack UI
 - [x] **Milestone 2**: Media3 `MediaSessionService`, inline PCM DSP pipeline, lock-free FFT
 - [x] **Milestone 3**: SAF (default) & MediaStore storage backends, live library/playlist wiring
 - [x] **Milestone 4**: Pure Kotlin Winamp format codecs (`.eqf`, `winamp.q1`/`q2`, `winamp.ini`, `.m3u`/`.m3u8`/`.pls`) & `AUTO` EQ
-- [ ] **Milestone 5**: `.wsz` Winamp 2.x skin archive parser & sprite slicer
-- [ ] **Milestone 6**: Dedicated Settings UI (folder management, SAF/MediaStore toggle, DSP controls, Winamp import/export triggers, `.wsz` skin selector)
+- [x] **Milestone 5**: `.wsz` Winamp 2.x skin archive parser, sprite slicer & Augmented `.wsz` skin engine
+- [x] **Milestone 6**: Dedicated Settings UI (folder management, Music Source & Volume Sync, DSP controls, Winamp import/export migration, `.wsz` skin browser & UX polish)
 
 ## Build, Test & Install
 
 ```bash
-# Run JVM unit tests (155 tests)
+# Run JVM unit tests (200 tests)
 ./gradlew testDebugUnitTest
 
 # Build debug APK
@@ -66,7 +75,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 DroidAmp follows **Semantic Versioning 2.0.0** (`vMAJOR.MINOR.PATCH[-alpha.N|-beta.N|-rc.N]`) paired with a strictly monotonic Android `versionCode` in [`app/build.gradle.kts`](app/build.gradle.kts) (see [ADR-025](DECISIONS.md)).
 
 - **Pre-releases (`alpha` / `beta` / `rc`)**: Published under [GitHub Releases](https://github.com/microtower00/droidamp/releases) with a sideloadable APK attached.
-- **Current Alpha**: `v0.1.0-alpha.1` (`versionCode = 1`).
+- **Current Alpha**: `v0.1.0-alpha.2` (`versionCode = 2`).
 
 ## Documentation
 

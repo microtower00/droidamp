@@ -1,0 +1,4 @@
+Alpha 2 (v0.1.0-alpha.2) — Milestones 5 & 6:
+- Augmented .wsz skin engine: Smart Legacy vector chrome + Classic BMP toggle, Contrast Guard, and 2 showcase skins.
+- Beveled Settings UI: 2-column Skin browser, SAF folder manager, Music Source & Volume Key Sync, and .ini/.q1/.q2/.eqf migration.
+- 1-click EQ PRESETS menu + inline naming, double-tap resets (0 dB/CTR), deterministic shuffle, revertible Low Latency buffer, and multi-select queue reorder grip.
