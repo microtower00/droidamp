@@ -57,6 +57,14 @@ object WszSpriteCoordinates {
   val EQ_PRESETS_NORMAL = SpriteRect(224, 164, 44, 12)
   val EQ_PRESETS_PRESSED = SpriteRect(224, 176, 44, 12)
 
+  // pledit.bmp (280x186) -> Active top bar parts + shaded/collapsed playlist bar
+  val PLEDIT_TOP_LEFT = SpriteRect(0, 0, 25, 20)
+  val PLEDIT_TOP_TITLE = SpriteRect(26, 0, 100, 20)
+  val PLEDIT_TOP_FILL = SpriteRect(127, 0, 25, 20)
+  val PLEDIT_TOP_RIGHT = SpriteRect(153, 0, 25, 20)
+  val PLEDIT_SHADED_COLLAPSED = SpriteRect(72, 42, 203, 14)
+  val PLEDIT_SHADED_FULL_ROW = SpriteRect(0, 42, 275, 14)
+
   // shufrep.bmp (92x85)
   val REPEAT_OFF = SpriteRect(0, 0, 28, 15)
   val REPEAT_ON = SpriteRect(0, 30, 28, 15)
@@ -87,6 +95,32 @@ object WszSpriteCoordinates {
   const val STANDARD_SLIDER_FRAME_COUNT = 28
   private const val SLIDER_FRAME_STRIDE_Y = 15
   private const val SLIDER_FRAME_HEIGHT = 13
+
+  fun pleditCollapsedHeaderRect(bmpWidth: Int, bmpHeight: Int): SpriteRect? =
+    when {
+      PLEDIT_SHADED_COLLAPSED.fitsIn(bmpWidth, bmpHeight) -> PLEDIT_SHADED_COLLAPSED
+      PLEDIT_SHADED_FULL_ROW.fitsIn(bmpWidth, bmpHeight) -> PLEDIT_SHADED_FULL_ROW
+      else -> null
+    }
+
+  /**
+   * Assembles a 275x20 active Winamp Playlist Editor top bar from `pledit.bmp`:
+   * `[left(25) + fill(25)*2 + title(100) + fill(25)*3 + right(25)]` = 275px wide.
+   */
+  fun pleditExpandedHeaderStripRects(bmpWidth: Int, bmpHeight: Int): List<SpriteRect> {
+    val parts =
+      listOf(
+        PLEDIT_TOP_LEFT,
+        PLEDIT_TOP_FILL,
+        PLEDIT_TOP_FILL,
+        PLEDIT_TOP_TITLE,
+        PLEDIT_TOP_FILL,
+        PLEDIT_TOP_FILL,
+        PLEDIT_TOP_FILL,
+        PLEDIT_TOP_RIGHT,
+      )
+    return if (parts.all { it.fitsIn(bmpWidth, bmpHeight) }) parts else emptyList()
+  }
 
   fun clockDigitRects(bmpWidth: Int, bmpHeight: Int): List<SpriteRect> {
     if (bmpHeight < 13) return emptyList()

@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,12 +30,19 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -50,9 +58,22 @@ import com.droidamp.player.skin.DroidAmpSkin
 import com.droidamp.player.skin.LocalDroidAmpSkin
 import com.droidamp.player.skin.TransportIconType
 
+private fun Modifier.skinClippedBackground(
+  skin: DroidAmpSkin,
+  color: Color,
+): Modifier {
+  val radius = skin.shapeStyle.cornerRadius
+  return if (radius > 0.dp) {
+    val shape = RoundedCornerShape(radius)
+    this.clip(shape).background(color, shape)
+  } else {
+    this.background(color)
+  }
+}
+
 fun Modifier.raisedBevel(
   skin: DroidAmpSkin,
-  thickness: Dp = skin.metrics.bevelThickness,
+  thickness: Dp = skin.shapeStyle.bevelThickness,
   pressed: Boolean = false,
 ): Modifier =
   drawBehind {
@@ -61,6 +82,28 @@ fun Modifier.raisedBevel(
     val topLeftInner = if (pressed) skin.bevel.shadowInner else skin.bevel.highlightInner
     val bottomRightOuter = if (pressed) skin.bevel.highlightOuter else skin.bevel.shadowOuter
     val bottomRightInner = if (pressed) skin.bevel.highlightInner else skin.bevel.shadowInner
+    val radiusPx = skin.shapeStyle.cornerRadius.toPx().coerceAtLeast(0f)
+
+    if (radiusPx > 0f) {
+      drawDirectionalRoundedBevel(
+        inset = 0f,
+        strokeWidth = px,
+        cornerRadiusPx = radiusPx,
+        topLeftColor = topLeftOuter,
+        bottomRightColor = bottomRightOuter,
+      )
+      if (skin.shapeStyle.doubleStepBevel && size.width > px * 4f && size.height > px * 4f) {
+        val half = px * 0.6f
+        drawDirectionalRoundedBevel(
+          inset = px,
+          strokeWidth = half,
+          cornerRadiusPx = (radiusPx - px).coerceAtLeast(0f),
+          topLeftColor = topLeftInner,
+          bottomRightColor = bottomRightInner,
+        )
+      }
+      return@drawBehind
+    }
 
     // Outer 1px crisp pixel bevel
     drawLine(topLeftOuter, Offset(0f, px * 0.5f), Offset(size.width, px * 0.5f), strokeWidth = px)
@@ -78,9 +121,9 @@ fun Modifier.raisedBevel(
       strokeWidth = px,
     )
 
-    // Subtle inner bevel step for deeper hardware look
+    // Subtle inner bevel step for deeper hardware look (honours skin.shapeStyle.doubleStepBevel)
     val inset = px
-    if (size.width > inset * 4f && size.height > inset * 4f) {
+    if (skin.shapeStyle.doubleStepBevel && size.width > inset * 4f && size.height > inset * 4f) {
       val half = px * 0.6f
       drawLine(
         topLeftInner,
@@ -111,10 +154,22 @@ fun Modifier.raisedBevel(
 
 fun Modifier.recessedBevel(
   skin: DroidAmpSkin,
-  thickness: Dp = skin.metrics.bevelThickness,
+  thickness: Dp = skin.shapeStyle.bevelThickness,
 ): Modifier =
   drawBehind {
     val px = thickness.toPx()
+    val radiusPx = skin.shapeStyle.cornerRadius.toPx().coerceAtLeast(0f)
+    if (radiusPx > 0f) {
+      drawDirectionalRoundedBevel(
+        inset = 0f,
+        strokeWidth = px,
+        cornerRadiusPx = radiusPx,
+        topLeftColor = skin.bevel.wellBorderDark,
+        bottomRightColor = skin.bevel.wellBorderLight,
+      )
+      return@drawBehind
+    }
+
     drawLine(
       skin.bevel.wellBorderDark,
       Offset(0f, px * 0.5f),
@@ -141,6 +196,64 @@ fun Modifier.recessedBevel(
     )
   }
 
+private fun DrawScope.drawDirectionalRoundedBevel(
+  inset: Float,
+  strokeWidth: Float,
+  cornerRadiusPx: Float,
+  topLeftColor: Color,
+  bottomRightColor: Color,
+) {
+  val w = size.width
+  val h = size.height
+  val boxW = (w - inset * 2f - strokeWidth).coerceAtLeast(1f)
+  val boxH = (h - inset * 2f - strokeWidth).coerceAtLeast(1f)
+  val topLeftOffset = Offset(inset + strokeWidth * 0.5f, inset + strokeWidth * 0.5f)
+  val boxSize = Size(boxW, boxH)
+  val clampedRadius =
+    (cornerRadiusPx - strokeWidth * 0.5f)
+      .coerceIn(0f, minOf(boxW, boxH) * 0.5f)
+  val cr = CornerRadius(clampedRadius, clampedRadius)
+  val miter = minOf(w, h) * 0.5f
+
+  val topLeftHalf =
+    Path().apply {
+      moveTo(0f, 0f)
+      lineTo(w, 0f)
+      lineTo(w - miter, miter)
+      lineTo(miter, h - miter)
+      lineTo(0f, h)
+      close()
+    }
+  val bottomRightHalf =
+    Path().apply {
+      moveTo(w, 0f)
+      lineTo(w, h)
+      lineTo(0f, h)
+      lineTo(miter, h - miter)
+      lineTo(w - miter, miter)
+      close()
+    }
+
+  clipPath(topLeftHalf) {
+    drawRoundRect(
+      color = topLeftColor,
+      topLeft = topLeftOffset,
+      size = boxSize,
+      cornerRadius = cr,
+      style = Stroke(width = strokeWidth),
+    )
+  }
+  clipPath(bottomRightHalf) {
+    drawRoundRect(
+      color = bottomRightColor,
+      topLeft = topLeftOffset,
+      size = boxSize,
+      cornerRadius = cr,
+      style = Stroke(width = strokeWidth),
+    )
+  }
+}
+
 @Composable
 fun HardwarePanel(
   modifier: Modifier = Modifier,
@@ -151,7 +264,7 @@ fun HardwarePanel(
   Box(
     modifier =
       modifier
-        .background(backgroundColor ?: skin.chassis.panelSurface)
+        .skinClippedBackground(skin, backgroundColor ?: skin.chassis.panelSurface)
         .raisedBevel(skin),
     content = content,
   )
@@ -168,7 +281,7 @@ fun RecessedWell(
   Box(
     modifier =
       modifier
-        .background(backgroundColor ?: skin.vfd.wellBackground)
+        .skinClippedBackground(skin, backgroundColor ?: skin.vfd.wellBackground)
         .recessedBevel(skin)
         .padding(contentPadding),
     content = content,
@@ -180,25 +293,38 @@ fun ChassisTitleBar(
   title: String,
   modifier: Modifier = Modifier,
   showDragGrip: Boolean = false,
-  customSprite: ImageBitmap? = LocalDroidAmpSkin.current.sprites.titleBarActive,
+  customSprite: ImageBitmap? = null,
   trailingContent: @Composable (() -> Unit)? = null,
 ) {
   val skin = LocalDroidAmpSkin.current
-  if (customSprite != null && trailingContent == null && !showDragGrip) {
-    // Render custom `.wsz` titlebar directly with nearest-neighbor crispness (no text collision)
-    Canvas(
+  if (customSprite != null) {
+    // Render custom `.wsz` / Augmented header sprite directly with nearest-neighbor crispness
+    // while keeping gesture modifiers (e.g. 1:1 drawer pan + tap) and optional trailingContent live!
+    Box(
       modifier =
         modifier
           .fillMaxWidth()
           .height(22.dp)
           .semantics { contentDescription = title },
     ) {
-      drawImage(
-        image = customSprite,
-        dstOffset = IntOffset.Zero,
-        dstSize = IntSize(size.width.toInt().coerceAtLeast(1), size.height.toInt().coerceAtLeast(1)),
-        filterQuality = FilterQuality.None,
-      )
+      Canvas(modifier = Modifier.fillMaxSize()) {
+        drawImage(
+          image = customSprite,
+          dstOffset = IntOffset.Zero,
+          dstSize = IntSize(size.width.toInt().coerceAtLeast(1), size.height.toInt().coerceAtLeast(1)),
+          filterQuality = FilterQuality.None,
+        )
+      }
+      if (trailingContent != null) {
+        Box(
+          modifier =
+            Modifier
+              .align(Alignment.CenterEnd)
+              .padding(end = 4.dp),
+        ) {
+          trailingContent()
+        }
+      }
     }
     return
   }
@@ -306,7 +432,7 @@ fun BeveledButton(
   Box(
     modifier =
       modifier
-        .background(if (isPressed) skin.bevel.buttonFacePressed else skin.bevel.buttonFace)
+        .skinClippedBackground(skin, if (isPressed) skin.bevel.buttonFacePressed else skin.bevel.buttonFace)
         .raisedBevel(skin, pressed = isPressed)
         .clickable(
           enabled = enabled,
@@ -376,7 +502,7 @@ fun BeveledIconButton(
   Box(
     modifier =
       modifier
-        .background(if (isPressed) skin.bevel.buttonFacePressed else skin.bevel.buttonFace)
+        .skinClippedBackground(skin, if (isPressed) skin.bevel.buttonFacePressed else skin.bevel.buttonFace)
         .raisedBevel(skin, pressed = isPressed)
         .semantics { this.contentDescription = contentDescription }
         .clickable(
@@ -443,7 +569,7 @@ fun BeveledLedToggleButton(
   Row(
     modifier =
       modifier
-        .background(if (isPressed || checked) skin.bevel.buttonFacePressed else skin.bevel.buttonFace)
+        .skinClippedBackground(skin, if (isPressed || checked) skin.bevel.buttonFacePressed else skin.bevel.buttonFace)
         .raisedBevel(skin, pressed = isPressed)
         .clickable(
           interactionSource = interactionSource,
@@ -501,7 +627,7 @@ fun RetroMicroMenuPopup(
       modifier =
         Modifier
           .widthIn(min = 160.dp, max = 240.dp)
-          .background(skin.chassis.panelSurface)
+          .skinClippedBackground(skin, skin.chassis.panelSurface)
           .raisedBevel(skin)
           .padding(3.dp),
       verticalArrangement = Arrangement.spacedBy(2.dp),

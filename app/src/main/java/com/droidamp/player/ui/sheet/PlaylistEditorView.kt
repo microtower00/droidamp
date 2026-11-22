@@ -359,67 +359,73 @@ fun PlaylistEditorView(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
       ) {
-      Box(modifier = Modifier.weight(1f)) {
-        BeveledButton(
-          label = "REM",
-          onClick = { onOpenMicroMenu(PlaylistMicroMenu.REM) },
-          modifier = Modifier.fillMaxWidth().height(32.dp),
-          contentPadding = PaddingValues(0.dp),
-        )
-        RetroMicroMenuPopup(
-          expanded = activeMicroMenu == PlaylistMicroMenu.REM,
-          title = "REMOVE",
-          actions =
-            listOf(
-              MicroMenuAction("REM SELECTED", onRemoveSelected),
-              MicroMenuAction("CROP SELECTED", onCropSelected),
-              MicroMenuAction("CLEAR QUEUE", onRequestClearQueue),
-            ),
-          onDismiss = onDismissMicroMenu,
-        )
-      }
+        Box(modifier = Modifier.weight(1f)) {
+          BeveledButton(
+            label = "REM",
+            onClick = { onOpenMicroMenu(PlaylistMicroMenu.REM) },
+            spriteNormal = skin.sprites.mobileRemNormal,
+            spritePressed = skin.sprites.mobileRemPressed,
+            modifier = Modifier.fillMaxWidth().height(32.dp),
+            contentPadding = PaddingValues(0.dp),
+          )
+          RetroMicroMenuPopup(
+            expanded = activeMicroMenu == PlaylistMicroMenu.REM,
+            title = "REMOVE",
+            actions =
+              listOf(
+                MicroMenuAction("REM SELECTED", onRemoveSelected),
+                MicroMenuAction("CROP SELECTED", onCropSelected),
+                MicroMenuAction("CLEAR QUEUE", onRequestClearQueue),
+              ),
+            onDismiss = onDismissMicroMenu,
+          )
+        }
 
-      Box(modifier = Modifier.weight(1f)) {
-        BeveledButton(
-          label = "MISC",
-          onClick = { onOpenMicroMenu(PlaylistMicroMenu.MISC) },
-          modifier = Modifier.fillMaxWidth().height(32.dp),
-          contentPadding = PaddingValues(0.dp),
-        )
-        RetroMicroMenuPopup(
-          expanded = activeMicroMenu == PlaylistMicroMenu.MISC,
-          title = "MISC OPTS",
-          actions =
-            listOf(
-              MicroMenuAction("JUMP / FILTER", onToggleJumpFilter),
-              MicroMenuAction("SORT BY TITLE") { onSortQueue(PlaylistSortOrder.TITLE) },
-              MicroMenuAction("SORT BY FILE") { onSortQueue(PlaylistSortOrder.FILENAME) },
-              MicroMenuAction("REVERSE QUEUE", onReverseQueue),
-              MicroMenuAction("RANDOMIZE", onRandomizeQueue),
-            ),
-          onDismiss = onDismissMicroMenu,
-        )
-      }
+        Box(modifier = Modifier.weight(1f)) {
+          BeveledButton(
+            label = "MISC",
+            onClick = { onOpenMicroMenu(PlaylistMicroMenu.MISC) },
+            spriteNormal = skin.sprites.mobileMiscNormal,
+            spritePressed = skin.sprites.mobileMiscPressed,
+            modifier = Modifier.fillMaxWidth().height(32.dp),
+            contentPadding = PaddingValues(0.dp),
+          )
+          RetroMicroMenuPopup(
+            expanded = activeMicroMenu == PlaylistMicroMenu.MISC,
+            title = "MISC OPTS",
+            actions =
+              listOf(
+                MicroMenuAction("JUMP / FILTER", onToggleJumpFilter),
+                MicroMenuAction("SORT BY TITLE") { onSortQueue(PlaylistSortOrder.TITLE) },
+                MicroMenuAction("SORT BY FILE") { onSortQueue(PlaylistSortOrder.FILENAME) },
+                MicroMenuAction("REVERSE QUEUE", onReverseQueue),
+                MicroMenuAction("RANDOMIZE", onRandomizeQueue),
+              ),
+            onDismiss = onDismissMicroMenu,
+          )
+        }
 
-      Box(modifier = Modifier.weight(1f)) {
-        BeveledButton(
-          label = "LIST",
-          onClick = { onOpenMicroMenu(PlaylistMicroMenu.LIST) },
-          modifier = Modifier.fillMaxWidth().height(32.dp),
-          contentPadding = PaddingValues(0.dp),
-        )
-        RetroMicroMenuPopup(
-          expanded = activeMicroMenu == PlaylistMicroMenu.LIST,
-          title = "LIST OPTS",
-          actions =
-            listOf(
-              MicroMenuAction("NEW QUEUE", onNewQueue),
-              MicroMenuAction("LOAD PLAYLIST", onLoadPlaylist),
-              MicroMenuAction("SAVE AS PLAYLIST...", onSavePlaylist),
-            ),
-          onDismiss = onDismissMicroMenu,
-        )
-      }
+        Box(modifier = Modifier.weight(1f)) {
+          BeveledButton(
+            label = "LIST",
+            onClick = { onOpenMicroMenu(PlaylistMicroMenu.LIST) },
+            spriteNormal = skin.sprites.mobileListNormal,
+            spritePressed = skin.sprites.mobileListPressed,
+            modifier = Modifier.fillMaxWidth().height(32.dp),
+            contentPadding = PaddingValues(0.dp),
+          )
+          RetroMicroMenuPopup(
+            expanded = activeMicroMenu == PlaylistMicroMenu.LIST,
+            title = "LIST OPTS",
+            actions =
+              listOf(
+                MicroMenuAction("NEW QUEUE", onNewQueue),
+                MicroMenuAction("LOAD PLAYLIST", onLoadPlaylist),
+                MicroMenuAction("SAVE AS PLAYLIST...", onSavePlaylist),
+              ),
+            onDismiss = onDismissMicroMenu,
+          )
+        }
       }
     }
   }

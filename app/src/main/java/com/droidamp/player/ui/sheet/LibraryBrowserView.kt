@@ -30,7 +30,6 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
 import com.droidamp.player.domain.model.AudioTrack
 import com.droidamp.player.domain.model.FolderContents
 import com.droidamp.player.domain.model.FolderEntry
@@ -39,9 +38,15 @@ import com.droidamp.player.domain.model.SavedPlaylistEntry
 import com.droidamp.player.domain.model.formatWinampDuration
 import com.droidamp.player.skin.LocalDroidAmpSkin
 import com.droidamp.player.skin.SkinEntry
+import com.droidamp.player.skin.SkinOrigin
+import com.droidamp.player.skin.SkinRenderMode
+import com.droidamp.player.skin.SkinSettingsState
 import com.droidamp.player.skin.SkinSource
 import com.droidamp.player.ui.components.BeveledButton
+import com.droidamp.player.ui.components.BeveledLedToggleButton
+import com.droidamp.player.ui.components.HardwareText
 import com.droidamp.player.ui.components.RecessedWell
+import kotlinx.coroutines.delay
 
 /**
  * iPod-style Library browser (`ROOT` -> `FOLDERS` | `PLAYLISTS`) enforcing ADR-009 & ADR-020:
@@ -86,6 +91,10 @@ fun LibraryBrowserView(
   onEnqueuePrimarySelection: () -> Unit,
   onClearSelection: () -> Unit,
   modifier: Modifier = Modifier,
+  skinSettings: SkinSettingsState = SkinSettingsState(),
+  onSetLegacyRenderMode: (SkinRenderMode) -> Unit = {},
+  onSetAutoContrastGuard: (Boolean) -> Unit = {},
+  onDeleteImportedSkin: (SkinEntry) -> Unit = {},
 ) {
   val skin = LocalDroidAmpSkin.current
   val haptics = LocalHapticFeedback.current
@@ -295,18 +304,78 @@ fun LibraryBrowserView(
                 }
               }
 
+              item(key = "skn-settings") {
+                RecessedWell(
+                  modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 2.dp),
+                  backgroundColor = skin.chassis.panelSurfaceAlt,
+                  contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                ) {
+                  Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                  ) {
+                    Row(
+                      modifier = Modifier.fillMaxWidth(),
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                      HardwareText(
+                        text = "LEGACY .WSZ:",
+                        color = skin.chassis.labelText,
+                        modifier = Modifier.width(88.dp),
+                      )
+                      BeveledLedToggleButton(
+                        label = "VECTOR",
+                        checked = skinSettings.legacyRenderMode == SkinRenderMode.VECTOR_CHROME,
+                        onClick = { onSetLegacyRenderMode(SkinRenderMode.VECTOR_CHROME) },
+                        compact = true,
+                        modifier = Modifier.weight(1f).height(26.dp),
+                      )
+                      BeveledLedToggleButton(
+                        label = "OG BMPS",
+                        checked = skinSettings.legacyRenderMode == SkinRenderMode.CLASSIC_RAW_BMP,
+                        onClick = { onSetLegacyRenderMode(SkinRenderMode.CLASSIC_RAW_BMP) },
+                        compact = true,
+                        modifier = Modifier.weight(1f).height(26.dp),
+                      )
+                    }
+
+                    Row(
+                      modifier = Modifier.fillMaxWidth(),
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                      HardwareText(
+                        text = "CONTRAST:",
+                        color = skin.chassis.labelText,
+                        modifier = Modifier.width(88.dp),
+                      )
+                      BeveledLedToggleButton(
+                        label = "AUTO FIX",
+                        checked = skinSettings.autoContrastGuard,
+                        onClick = { onSetAutoContrastGuard(true) },
+                        compact = true,
+                        modifier = Modifier.weight(1f).height(26.dp),
+                      )
+                      BeveledLedToggleButton(
+                        label = "RAW COLORS",
+                        checked = !skinSettings.autoContrastGuard,
+                        onClick = { onSetAutoContrastGuard(false) },
+                        compact = true,
+                        modifier = Modifier.weight(1f).height(26.dp),
+                      )
+                    }
+                  }
+                }
+              }
+
               items(items = availableSkins, key = { "skin-${it.id}" }) { entry ->
                 val isActive = entry.id == activeSkinId
                 val rowBg =
                   if (isActive) skin.playlist.selectedBackground else skin.playlist.normalBackground
                 val rowFg =
                   if (isActive) skin.playlist.selectedText else skin.playlist.normalText
-                val sourceTag =
-                  when (entry.source) {
-                    SkinSource.BUILT_IN -> "BUILT-IN"
-                    SkinSource.IMPORTED -> "IMPORTED .WSZ"
-                    SkinSource.SAF_FOLDER -> "MUSIC FOLDER .WSZ"
-                  }
+                val sourceTag = formatSkinSubtitle(entry)
                 Row(
                   modifier =
                     Modifier
@@ -335,6 +404,15 @@ fun LibraryBrowserView(
                       text = "[ACTIVE]",
                       style = skin.typography.microLabel,
                       color = skin.vfd.phosphorPrimary,
+                    )
+                  }
+                  if (entry.source.canDelete) {
+                    Spacer(Modifier.width(6.dp))
+                    BeveledButton(
+                      label = "DEL",
+                      onClick = { onDeleteImportedSkin(entry) },
+                      modifier = Modifier.height(26.dp),
+                      contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
                     )
                   }
                 }
@@ -396,6 +474,8 @@ fun LibraryBrowserView(
                   BeveledButton(
                     label = "▶",
                     onClick = { onPlayFolder(folder) },
+                    spriteNormal = skin.sprites.mobileRowPlayNormal,
+                    spritePressed = skin.sprites.mobileRowPlayPressed,
                     modifier = Modifier.size(width = 32.dp, height = 28.dp),
                     contentPadding = PaddingValues(0.dp),
                   )
@@ -406,6 +486,8 @@ fun LibraryBrowserView(
                       haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                       onEnqueueFolder(folder)
                     },
+                    spriteNormal = skin.sprites.mobileRowEnqueueNormal,
+                    spritePressed = skin.sprites.mobileRowEnqueuePressed,
                     modifier = Modifier.size(width = 32.dp, height = 28.dp),
                     contentPadding = PaddingValues(0.dp),
                   )
@@ -456,6 +538,8 @@ fun LibraryBrowserView(
                   BeveledButton(
                     label = "▶",
                     onClick = { onPlayTrack(track) },
+                    spriteNormal = skin.sprites.mobileRowPlayNormal,
+                    spritePressed = skin.sprites.mobileRowPlayPressed,
                     modifier = Modifier.size(width = 32.dp, height = 28.dp),
                     contentPadding = PaddingValues(0.dp),
                   )
@@ -466,6 +550,8 @@ fun LibraryBrowserView(
                       haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                       onEnqueueTrack(track)
                     },
+                    spriteNormal = skin.sprites.mobileRowEnqueueNormal,
+                    spritePressed = skin.sprites.mobileRowEnqueuePressed,
                     modifier = Modifier.size(width = 32.dp, height = 28.dp),
                     contentPadding = PaddingValues(0.dp),
                   )
@@ -555,6 +641,8 @@ fun LibraryBrowserView(
                     BeveledButton(
                       label = "▶",
                       onClick = { onPlayPlaylist(pl) },
+                      spriteNormal = skin.sprites.mobileRowPlayNormal,
+                      spritePressed = skin.sprites.mobileRowPlayPressed,
                       modifier = Modifier.size(width = 32.dp, height = 28.dp),
                       contentPadding = PaddingValues(0.dp),
                     )
@@ -565,6 +653,8 @@ fun LibraryBrowserView(
                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         onEnqueuePlaylist(pl)
                       },
+                      spriteNormal = skin.sprites.mobileRowEnqueueNormal,
+                      spritePressed = skin.sprites.mobileRowEnqueuePressed,
                       modifier = Modifier.size(width = 32.dp, height = 28.dp),
                       contentPadding = PaddingValues(0.dp),
                     )
@@ -668,3 +758,25 @@ private fun PingPongSelectableTrackTitle(
     )
   }
 }
+
+private fun formatSkinSubtitle(entry: SkinEntry): String =
+  when (entry.source) {
+    SkinSource.BUILT_IN -> "BUILT-IN DEFAULT"
+    SkinSource.BUILT_IN_SHOWCASE ->
+      when (entry.origin) {
+        SkinOrigin.LEGACY_WSZ -> "SHOWCASE · LEGACY .WSZ"
+        SkinOrigin.AUGMENTED_WSZ, SkinOrigin.BUILT_IN -> "SHOWCASE · AUGMENTED .WSZ"
+      }
+    SkinSource.IMPORTED ->
+      when (entry.origin) {
+        SkinOrigin.AUGMENTED_WSZ -> "IMPORTED · AUGMENTED .WSZ"
+        SkinOrigin.LEGACY_WSZ -> "IMPORTED · LEGACY .WSZ"
+        SkinOrigin.BUILT_IN -> "IMPORTED · .WSZ"
+      }
+    SkinSource.SAF_FOLDER ->
+      when (entry.origin) {
+        SkinOrigin.AUGMENTED_WSZ -> "MUSIC FOLDER · AUGMENTED .WSZ"
+        SkinOrigin.LEGACY_WSZ -> "MUSIC FOLDER · LEGACY .WSZ"
+        SkinOrigin.BUILT_IN -> "MUSIC FOLDER · .WSZ"
+      }
+  }

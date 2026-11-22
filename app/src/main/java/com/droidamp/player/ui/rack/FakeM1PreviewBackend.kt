@@ -4,6 +4,7 @@ import com.droidamp.player.domain.contract.AudioEngineController
 import com.droidamp.player.domain.contract.MusicSourceRepository
 import com.droidamp.player.domain.model.AudioTrack
 import com.droidamp.player.domain.model.ChannelMode
+import com.droidamp.player.domain.model.DspSettings
 import com.droidamp.player.domain.model.EqPreset
 import com.droidamp.player.domain.model.FolderContents
 import com.droidamp.player.domain.model.FolderEntry
@@ -47,6 +48,15 @@ class FakeAudioEngineController(
 
   private val _visualizerFrame = MutableStateFlow(VisualizerFrame.SILENT)
   override val visualizerFrame: StateFlow<VisualizerFrame> = _visualizerFrame.asStateFlow()
+
+  private val _dspSettings = MutableStateFlow(DspSettings())
+  override val dspSettings: StateFlow<DspSettings> = _dspSettings.asStateFlow()
+
+  override fun setDspSettings(settings: DspSettings) {
+    synchronized(stateLock) {
+      _dspSettings.value = settings.sanitized()
+    }
+  }
 
   private val stateLock = Any()
   private var tickerJob: Job? = null

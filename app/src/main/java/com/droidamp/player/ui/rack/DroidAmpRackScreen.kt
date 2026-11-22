@@ -78,7 +78,6 @@ fun DroidAmpRackScreen(
   modifier: Modifier = Modifier,
   onRequestSafFolderPicker: (() -> Unit)? = null,
 ) {
-  val skin = LocalDroidAmpSkin.current
   val context = LocalContext.current
   val density = LocalDensity.current
   val hasActivityResultOwner = LocalActivityResultRegistryOwner.current != null
@@ -89,6 +88,8 @@ fun DroidAmpRackScreen(
   val storageBackend by viewModel.storageBackend.collectAsStateWithLifecycle()
   val availableSkins by viewModel.availableSkins.collectAsStateWithLifecycle()
   val activeSkin by viewModel.activeSkin.collectAsStateWithLifecycle()
+  val skinSettings by viewModel.skinSettings.collectAsStateWithLifecycle()
+  val skinRecoveryNotice by viewModel.skinRecoveryNotice.collectAsStateWithLifecycle()
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
   var pendingM3u8Export by remember { mutableStateOf<Pair<String, String>?>(null) }
@@ -206,262 +207,279 @@ fun DroidAmpRackScreen(
   val statusBarTopDp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
   CompositionLocalProvider(LocalDroidAmpSkin provides activeSkin) {
-  val currentSkin = LocalDroidAmpSkin.current
-  BoxWithConstraints(
-    modifier =
-      modifier
-        .fillMaxSize()
-        .background(currentSkin.chassis.windowBackground),
-  ) {
-    val fullHeightPx = constraints.maxHeight.toFloat().coerceAtLeast(1f)
-    val statusBarTopPx = with(density) { statusBarTopDp.toPx() }
-    val minBrowserHeightPx = with(density) { 180.dp.toPx() }
-    var instrumentHeightPx by remember { mutableFloatStateOf((fullHeightPx - minBrowserHeightPx).coerceAtLeast(1f)) }
-
-    // Maximum vertical pan distance leaves the expanded browser titlebar cleanly below the status bar
-    val maxPanPx =
-      (instrumentHeightPx - statusBarTopPx).coerceIn(1f, (fullHeightPx - minBrowserHeightPx).coerceAtLeast(1f))
-
-    // Stereo-Tower Camera Pan offset:
-    // 0f        = Resting (Main Deck + EQ + live Queue/Library below)
-    // maxPanPx  = Expanded (Main Deck + EQ smoothly panned up behind status bar scrim)
-    val panOffsetPx = remember { Animatable(0f) }
-
-    LaunchedEffect(uiState.isSheetExpanded, maxPanPx) {
-      val target = if (uiState.isSheetExpanded) maxPanPx else 0f
-      panOffsetPx.animateTo(
-        targetValue = target,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-      )
-    }
-
-    // Drag delta is screen-space Y (negative = dragging finger UP -> increases panOffsetPx)
-    val onStereoPanDelta: (Float) -> Unit = { dragDeltaY ->
-      scope.launch {
-        val next = (panOffsetPx.value - dragDeltaY).coerceIn(0f, maxPanPx)
-        panOffsetPx.snapTo(next)
-      }
-    }
-
-    val onStereoPanFinished: (Float) -> Unit = { totalDragY ->
-      val progress = (panOffsetPx.value / maxPanPx).coerceIn(0f, 1f)
-      val shouldExpand =
-        if (uiState.isSheetExpanded) {
-          !(progress < 0.82f || totalDragY > 80f)
-        } else {
-          progress > 0.18f || totalDragY < -64f
-        }
-      if (shouldExpand) {
-        viewModel.expandSheetRememberedMode()
-        scope.launch {
-          panOffsetPx.animateTo(maxPanPx, spring(stiffness = Spring.StiffnessMediumLow))
-        }
-      } else {
-        viewModel.collapseSheet()
-        scope.launch {
-          panOffsetPx.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow))
-        }
-      }
-    }
-
-    val currentPan = panOffsetPx.value.coerceIn(0f, maxPanPx)
-    val browserTopPx = (instrumentHeightPx - currentPan).coerceAtLeast(statusBarTopPx)
-    val browserHeightDp = with(density) { (fullHeightPx - browserTopPx).coerceAtLeast(minBrowserHeightPx).toDp() }
-
-    // Top Stereo Section: status-bar spacer + Main Deck + Collapsible EQ + non-interactive swipe buffer
-    // Translates smoothly UP behind the adaptive status-bar scrim as the user pans (ADR-023 / ADR-024)
-    Column(
+    val currentSkin = LocalDroidAmpSkin.current
+    BoxWithConstraints(
       modifier =
-        Modifier
-          .fillMaxWidth()
-          .offset { IntOffset(0, (-currentPan).roundToInt()) }
-          .onGloballyPositioned { coords ->
-            val h = coords.size.height.toFloat()
-            if (h > 0f) instrumentHeightPx = h
-          },
+        modifier
+          .fillMaxSize()
+          .background(currentSkin.chassis.windowBackground),
     ) {
-      Box(modifier = Modifier.fillMaxWidth().statusBarsPadding())
-      MainDeckPanel(
-        playbackState = playbackState,
-        visualizerFrameProvider = { visualizerFrameState.value },
-        isEqVisible = uiState.isEqVisible,
-        isSheetExpanded = uiState.isSheetExpanded,
-        onToggleTimeMode = viewModel::toggleTimeDisplayMode,
-        onCycleVisualizerMode = viewModel::cycleVisualizerMode,
-        onVolumeChange = viewModel::setVolume,
-        onBalanceChange = viewModel::setBalance,
-        onSeekTo = viewModel::seekTo,
-        onPrev = viewModel::previous,
-        onPlay = viewModel::play,
-        onPause = viewModel::pause,
-        onStop = viewModel::stop,
-        onNext = viewModel::next,
-        onEject = viewModel::onEjectPressed,
-        onToggleShuffle = viewModel::toggleShuffle,
-        onCycleRepeat = viewModel::cycleRepeatMode,
-        onToggleEqVisible = viewModel::toggleEqVisible,
-        onTogglePlaylistSheet = viewModel::onQueueButtonPressed,
-      )
+      val fullHeightPx = constraints.maxHeight.toFloat().coerceAtLeast(1f)
+      val statusBarTopPx = with(density) { statusBarTopDp.toPx() }
+      val minBrowserHeightPx = with(density) { 180.dp.toPx() }
+      var instrumentHeightPx by remember { mutableFloatStateOf((fullHeightPx - minBrowserHeightPx).coerceAtLeast(1f)) }
 
-      AnimatedVisibility(
-        visible = uiState.isEqVisible,
-        enter = expandVertically(),
-        exit = shrinkVertically(),
-      ) {
-        EqualizerPanel(
-          eqState = playbackState.equalizer,
-          onToggleEnabled = viewModel::toggleEqEnabled,
-          onToggleAuto = viewModel::toggleEqAuto,
-          onPreampChange = viewModel::setPreampDb,
-          onBandChange = viewModel::setEqBandDb,
-          onApplyPreset = viewModel::applyEqPreset,
-          availablePresets = uiState.availableEqPresets,
-          autoEqStatusReadout = uiState.autoEqFeedbackMessage,
-          sliderBankHeight = 132.dp,
+      // Maximum vertical pan distance leaves the expanded browser titlebar cleanly below the status bar
+      val maxPanPx =
+        (instrumentHeightPx - statusBarTopPx).coerceIn(1f, (fullHeightPx - minBrowserHeightPx).coerceAtLeast(1f))
+
+      // Stereo-Tower Camera Pan offset:
+      // 0f        = Resting (Main Deck + EQ + live Queue/Library below)
+      // maxPanPx  = Expanded (Main Deck + EQ smoothly panned up behind status bar scrim)
+      val panOffsetPx = remember { Animatable(0f) }
+
+      LaunchedEffect(uiState.isSheetExpanded, maxPanPx) {
+        val target = if (uiState.isSheetExpanded) maxPanPx else 0f
+        panOffsetPx.animateTo(
+          targetValue = target,
+          animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         )
       }
 
-      // Non-interactive chassis bezel buffer separating EQ bottom from Queue/Library titlebar
+      // Drag delta is screen-space Y (negative = dragging finger UP -> increases panOffsetPx)
+      val onStereoPanDelta: (Float) -> Unit = { dragDeltaY ->
+        scope.launch {
+          val next = (panOffsetPx.value - dragDeltaY).coerceIn(0f, maxPanPx)
+          panOffsetPx.snapTo(next)
+        }
+      }
+
+      val onStereoPanFinished: (Float) -> Unit = { totalDragY ->
+        val progress = (panOffsetPx.value / maxPanPx).coerceIn(0f, 1f)
+        val shouldExpand =
+          if (uiState.isSheetExpanded) {
+            !(progress < 0.82f || totalDragY > 80f)
+          } else {
+            progress > 0.18f || totalDragY < -64f
+          }
+        if (shouldExpand) {
+          viewModel.expandSheetRememberedMode()
+          scope.launch {
+            panOffsetPx.animateTo(maxPanPx, spring(stiffness = Spring.StiffnessMediumLow))
+          }
+        } else {
+          viewModel.collapseSheet()
+          scope.launch {
+            panOffsetPx.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow))
+          }
+        }
+      }
+
+      val currentPan = panOffsetPx.value.coerceIn(0f, maxPanPx)
+      val browserTopPx = (instrumentHeightPx - currentPan).coerceAtLeast(statusBarTopPx)
+      val browserHeightDp = with(density) { (fullHeightPx - browserTopPx).coerceAtLeast(minBrowserHeightPx).toDp() }
+
+      // Top Stereo Section: status-bar spacer + Main Deck + Collapsible EQ + non-interactive swipe buffer
+      // Translates smoothly UP behind the adaptive status-bar scrim as the user pans (ADR-023 / ADR-024)
+      Column(
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .offset { IntOffset(0, (-currentPan).roundToInt()) }
+            .onGloballyPositioned { coords ->
+              val h = coords.size.height.toFloat()
+              if (h > 0f) instrumentHeightPx = h
+            },
+      ) {
+        Box(modifier = Modifier.fillMaxWidth().statusBarsPadding())
+        MainDeckPanel(
+          playbackState = playbackState,
+          visualizerFrameProvider = { visualizerFrameState.value },
+          isEqVisible = uiState.isEqVisible,
+          isSheetExpanded = uiState.isSheetExpanded,
+          onToggleTimeMode = viewModel::toggleTimeDisplayMode,
+          onCycleVisualizerMode = viewModel::cycleVisualizerMode,
+          onVolumeChange = viewModel::setVolume,
+          onBalanceChange = viewModel::setBalance,
+          onSeekTo = viewModel::seekTo,
+          onPrev = viewModel::previous,
+          onPlay = viewModel::play,
+          onPause = viewModel::pause,
+          onStop = viewModel::stop,
+          onNext = viewModel::next,
+          onEject = viewModel::onEjectPressed,
+          onToggleShuffle = viewModel::toggleShuffle,
+          onCycleRepeat = viewModel::cycleRepeatMode,
+          onToggleEqVisible = viewModel::toggleEqVisible,
+          onTogglePlaylistSheet = viewModel::onQueueButtonPressed,
+        )
+
+        AnimatedVisibility(
+          visible = uiState.isEqVisible,
+          enter = expandVertically(),
+          exit = shrinkVertically(),
+        ) {
+          EqualizerPanel(
+            eqState = playbackState.equalizer,
+            onToggleEnabled = viewModel::toggleEqEnabled,
+            onToggleAuto = viewModel::toggleEqAuto,
+            onPreampChange = viewModel::setPreampDb,
+            onBandChange = viewModel::setEqBandDb,
+            onApplyPreset = viewModel::applyEqPreset,
+            availablePresets = uiState.availableEqPresets,
+            autoEqStatusReadout = uiState.autoEqFeedbackMessage,
+            sliderBankHeight = 132.dp,
+          )
+        }
+
+        // Non-interactive chassis bezel buffer separating EQ bottom from Queue/Library titlebar
+        Box(
+          modifier =
+            Modifier
+              .fillMaxWidth()
+              .height(currentSkin.metrics.sheetSwipeBufferHeight)
+              .background(currentSkin.chassis.panelSurfaceAlt),
+        )
+      }
+
+      // Bottom Stereo Section: Always-live, always-interactive Queue / Library Panel
+      // Docked directly beneath the bezel buffer and grows seamlessly to full height as the tower pans up
       Box(
         modifier =
           Modifier
             .fillMaxWidth()
-            .height(skin.metrics.sheetSwipeBufferHeight)
-            .background(skin.chassis.panelSurfaceAlt),
-      )
-    }
+            .height(browserHeightDp)
+            .offset { IntOffset(0, browserTopPx.roundToInt()) },
+      ) {
+        UnifiedQueueLibraryPanel(
+          isExpanded = uiState.isSheetExpanded,
+          sheetMode = uiState.sheetMode,
+          hasLinkedRoots = hasLinkedRoots,
+          playbackState = playbackState,
+          selectedPlaylistIndices = uiState.selectedPlaylistIndices,
+          showJumpFilter = uiState.showJumpFilter,
+          jumpFilterQuery = uiState.jumpFilterQuery,
+          activeMicroMenu = uiState.activeMicroMenu,
+          showClearQueueConfirm = uiState.showClearQueueConfirm,
+          libraryViewLevel = uiState.libraryViewLevel,
+          folderContents = uiState.folderContents,
+          playlists = uiState.playlists,
+          availableSkins = availableSkins,
+          activeSkinId = activeSkin.id,
+          selectedLibraryTrackIds = uiState.selectedLibraryTrackIds,
+          selectedPlaylistId = uiState.selectedLibraryPlaylistId,
+          libraryFeedbackBanner = uiState.libraryFeedbackBanner,
+          queueFeedbackPulseCount = uiState.queueFeedbackPulseCount,
+          onToggleExpand = viewModel::toggleSheetExpanded,
+          onDragDelta = onStereoPanDelta,
+          onDragFinished = onStereoPanFinished,
+          canPullDownToCollapse = { panOffsetPx.value > 0.5f },
+          isMidPan = { panOffsetPx.value > 0.5f && panOffsetPx.value < maxPanPx - 0.5f },
+          onSelectMusicFolder = triggerSelectMusicFolder,
+          onSwitchSheetMode = viewModel::switchSheetMode,
+          onPlaylistTrackClick = viewModel::onPlaylistTrackClick,
+          onPlaylistTrackDoubleClick = viewModel::onPlaylistTrackDoubleClick,
+          onMoveTrackUp = { idx -> viewModel.movePlaylistTrack(idx, idx - 1) },
+          onMoveTrackDown = { idx -> viewModel.movePlaylistTrack(idx, idx + 1) },
+          onJumpFilterChange = viewModel::onJumpFilterQueryChange,
+          onToggleJumpFilter = viewModel::toggleJumpFilter,
+          onOpenMicroMenu = viewModel::openMicroMenu,
+          onDismissMicroMenu = viewModel::dismissMicroMenu,
+          onRemoveSelected = viewModel::removeSelectedPlaylistTracks,
+          onCropSelected = viewModel::cropSelectedPlaylistTracks,
+          onRequestClearQueue = viewModel::requestClearQueue,
+          onConfirmClearQueue = viewModel::confirmClearQueue,
+          onDismissClearQueueConfirm = viewModel::dismissClearQueueConfirm,
+          onSortQueue = viewModel::sortPlaylist,
+          onReverseQueue = viewModel::reversePlaylist,
+          onRandomizeQueue = viewModel::randomizePlaylist,
+          onNewQueue = viewModel::requestClearQueue,
+          onSavePlaylist = viewModel::openSavePlaylistDialog,
+          onLoadPlaylist = viewModel::onLoadPlaylistShortcut,
+          onOpenLibraryRoot = viewModel::openLibraryRoot,
+          onOpenLibraryFolders = viewModel::openLibraryFolders,
+          onOpenLibraryPlaylists = viewModel::openLibraryPlaylists,
+          onOpenLibrarySkins = viewModel::openLibrarySkins,
+          onSelectSkin = viewModel::selectSkin,
+          onImportSkinClick = { importSkinLauncher?.launch(arrayOf("*/*")) },
+          onNavigateUp = viewModel::navigateFolderUp,
+          onOpenFolder = viewModel::openFolder,
+          onPlayFolder = viewModel::playFolderAsPlaylist,
+          onEnqueueFolder = viewModel::enqueueFolder,
+          onPlayCurrentFolder = viewModel::playCurrentFolder,
+          onEnqueueCurrentFolder = viewModel::enqueueCurrentFolder,
+          onToggleLibraryTrackSelection = viewModel::toggleLibraryTrackSelection,
+          onPlayLibraryTrack = viewModel::playSingleLibraryTrack,
+          onEnqueueLibraryTrack = viewModel::enqueueSingleLibraryTrack,
+          onSelectLibraryPlaylist = viewModel::selectLibraryPlaylist,
+          onPlayLibraryPlaylist = viewModel::playSavedPlaylist,
+          onEnqueueLibraryPlaylist = viewModel::enqueueSavedPlaylist,
+          onPlayPrimaryLibrarySelection = viewModel::playPrimaryLibrarySelection,
+          onEnqueuePrimaryLibrarySelection = viewModel::enqueuePrimaryLibrarySelection,
+          onClearLibrarySelection = viewModel::clearLibrarySelection,
+          onPrev = viewModel::previous,
+          onPlay = viewModel::play,
+          onPause = viewModel::pause,
+          onStop = viewModel::stop,
+          onNext = viewModel::next,
+          onMoveTrack = viewModel::movePlaylistTrack,
+          skinSettings = skinSettings,
+          onSetLegacyRenderMode = viewModel::setLegacySkinRenderMode,
+          onSetAutoContrastGuard = viewModel::setAutoContrastGuard,
+          onDeleteImportedSkin = viewModel::deleteImportedSkin,
+        )
+      }
 
-    // Bottom Stereo Section: Always-live, always-interactive Queue / Library Panel
-    // Docked directly beneath the bezel buffer and grows seamlessly to full height as the tower pans up
-    Box(
-      modifier =
-        Modifier
-          .fillMaxWidth()
-          .height(browserHeightDp)
-          .offset { IntOffset(0, browserTopPx.roundToInt()) },
-    ) {
-      UnifiedQueueLibraryPanel(
-        isExpanded = uiState.isSheetExpanded,
-        sheetMode = uiState.sheetMode,
-        hasLinkedRoots = hasLinkedRoots,
-        playbackState = playbackState,
-        selectedPlaylistIndices = uiState.selectedPlaylistIndices,
-        showJumpFilter = uiState.showJumpFilter,
-        jumpFilterQuery = uiState.jumpFilterQuery,
-        activeMicroMenu = uiState.activeMicroMenu,
-        showClearQueueConfirm = uiState.showClearQueueConfirm,
-        libraryViewLevel = uiState.libraryViewLevel,
-        folderContents = uiState.folderContents,
-        playlists = uiState.playlists,
-        availableSkins = availableSkins,
-        activeSkinId = activeSkin.id,
-        selectedLibraryTrackIds = uiState.selectedLibraryTrackIds,
-        selectedPlaylistId = uiState.selectedLibraryPlaylistId,
-        libraryFeedbackBanner = uiState.libraryFeedbackBanner,
-        queueFeedbackPulseCount = uiState.queueFeedbackPulseCount,
-        onToggleExpand = viewModel::toggleSheetExpanded,
-        onDragDelta = onStereoPanDelta,
-        onDragFinished = onStereoPanFinished,
-        canPullDownToCollapse = { panOffsetPx.value > 0.5f },
-        isMidPan = { panOffsetPx.value > 0.5f && panOffsetPx.value < maxPanPx - 0.5f },
-        onSelectMusicFolder = triggerSelectMusicFolder,
-        onSwitchSheetMode = viewModel::switchSheetMode,
-        onPlaylistTrackClick = viewModel::onPlaylistTrackClick,
-        onPlaylistTrackDoubleClick = viewModel::onPlaylistTrackDoubleClick,
-        onMoveTrackUp = { idx -> viewModel.movePlaylistTrack(idx, idx - 1) },
-        onMoveTrackDown = { idx -> viewModel.movePlaylistTrack(idx, idx + 1) },
-        onJumpFilterChange = viewModel::onJumpFilterQueryChange,
-        onToggleJumpFilter = viewModel::toggleJumpFilter,
-        onOpenMicroMenu = viewModel::openMicroMenu,
-        onDismissMicroMenu = viewModel::dismissMicroMenu,
-        onRemoveSelected = viewModel::removeSelectedPlaylistTracks,
-        onCropSelected = viewModel::cropSelectedPlaylistTracks,
-        onRequestClearQueue = viewModel::requestClearQueue,
-        onConfirmClearQueue = viewModel::confirmClearQueue,
-        onDismissClearQueueConfirm = viewModel::dismissClearQueueConfirm,
-        onSortQueue = viewModel::sortPlaylist,
-        onReverseQueue = viewModel::reversePlaylist,
-        onRandomizeQueue = viewModel::randomizePlaylist,
-        onNewQueue = viewModel::requestClearQueue,
-        onSavePlaylist = viewModel::openSavePlaylistDialog,
-        onLoadPlaylist = viewModel::onLoadPlaylistShortcut,
-        onOpenLibraryRoot = viewModel::openLibraryRoot,
-        onOpenLibraryFolders = viewModel::openLibraryFolders,
-        onOpenLibraryPlaylists = viewModel::openLibraryPlaylists,
-        onOpenLibrarySkins = viewModel::openLibrarySkins,
-        onSelectSkin = viewModel::selectSkin,
-        onImportSkinClick = { importSkinLauncher?.launch(arrayOf("*/*")) },
-        onNavigateUp = viewModel::navigateFolderUp,
-        onOpenFolder = viewModel::openFolder,
-        onPlayFolder = viewModel::playFolderAsPlaylist,
-        onEnqueueFolder = viewModel::enqueueFolder,
-        onPlayCurrentFolder = viewModel::playCurrentFolder,
-        onEnqueueCurrentFolder = viewModel::enqueueCurrentFolder,
-        onToggleLibraryTrackSelection = viewModel::toggleLibraryTrackSelection,
-        onPlayLibraryTrack = viewModel::playSingleLibraryTrack,
-        onEnqueueLibraryTrack = viewModel::enqueueSingleLibraryTrack,
-        onSelectLibraryPlaylist = viewModel::selectLibraryPlaylist,
-        onPlayLibraryPlaylist = viewModel::playSavedPlaylist,
-        onEnqueueLibraryPlaylist = viewModel::enqueueSavedPlaylist,
-        onPlayPrimaryLibrarySelection = viewModel::playPrimaryLibrarySelection,
-        onEnqueuePrimaryLibrarySelection = viewModel::enqueuePrimaryLibrarySelection,
-        onClearLibrarySelection = viewModel::clearLibrarySelection,
-        onPrev = viewModel::previous,
-        onPlay = viewModel::play,
-        onPause = viewModel::pause,
-        onStop = viewModel::stop,
-        onNext = viewModel::next,
-        onMoveTrack = viewModel::movePlaylistTrack,
-      )
-    }
-
-    // Adaptive light/dark translucent scrim over the Android status bar so EQ/Deck gliding
-    // behind the top bar preserves crystal-clear contrast for system icons (ADR-024).
-    val scrimBase = if (isDarkSystemTheme) Color.Black else Color.White
-    Box(
-      modifier =
-        Modifier
-          .fillMaxWidth()
-          .height(statusBarTopDp + 16.dp)
-          .align(Alignment.TopCenter)
-          .background(
-            Brush.verticalGradient(
-              colorStops =
-                arrayOf(
-                  0.0f to scrimBase.copy(alpha = 0.84f),
-                  0.62f to scrimBase.copy(alpha = 0.52f),
-                  1.0f to Color.Transparent,
-                ),
+      // Adaptive light/dark translucent scrim over the Android status bar so EQ/Deck gliding
+      // behind the top bar preserves crystal-clear contrast for system icons (ADR-024).
+      val scrimBase = if (isDarkSystemTheme) Color.Black else Color.White
+      Box(
+        modifier =
+          Modifier
+            .fillMaxWidth()
+            .height(statusBarTopDp + 16.dp)
+            .align(Alignment.TopCenter)
+            .background(
+              Brush.verticalGradient(
+                colorStops =
+                  arrayOf(
+                    0.0f to scrimBase.copy(alpha = 0.84f),
+                    0.62f to scrimBase.copy(alpha = 0.52f),
+                    1.0f to Color.Transparent,
+                  ),
+              ),
             ),
-          ),
-    )
-
-    if (uiState.showSavePlaylistDialog) {
-      SavePlaylistDialog(
-        totalTrackCount = playbackState.queue.size,
-        totalDurationMs = playbackState.totalQueueDurationMs,
-        selectedTrackCount = uiState.selectedPlaylistIndices.size,
-        existingPlaylistNames = uiState.playlists.map { it.name }.toSet(),
-        onDismiss = viewModel::dismissSavePlaylistDialog,
-        onConfirmSave = { baseName, format, selectedOnly ->
-          viewModel.saveQueueAsPlaylist(
-            baseName = baseName,
-            format = format,
-            selectedOnly = selectedOnly,
-            onNeedDocumentPickerFallback =
-              if (hasActivityResultOwner && createM3u8Launcher != null) {
-                { fileName, content ->
-                  pendingM3u8Export = fileName to content
-                  createM3u8Launcher.launch(fileName)
-                }
-              } else {
-                null
-              },
-          )
-        },
       )
+
+      if (uiState.showSavePlaylistDialog) {
+        SavePlaylistDialog(
+          totalTrackCount = playbackState.queue.size,
+          totalDurationMs = playbackState.totalQueueDurationMs,
+          selectedTrackCount = uiState.selectedPlaylistIndices.size,
+          existingPlaylistNames = uiState.playlists.map { it.name }.toSet(),
+          onDismiss = viewModel::dismissSavePlaylistDialog,
+          onConfirmSave = { baseName, format, selectedOnly ->
+            viewModel.saveQueueAsPlaylist(
+              baseName = baseName,
+              format = format,
+              selectedOnly = selectedOnly,
+              onNeedDocumentPickerFallback =
+                if (hasActivityResultOwner && createM3u8Launcher != null) {
+                  { fileName, content ->
+                    pendingM3u8Export = fileName to content
+                    createM3u8Launcher.launch(fileName)
+                  }
+                } else {
+                  null
+                },
+            )
+          },
+        )
+      }
+
+      val activeNotice = skinRecoveryNotice
+      if (activeNotice != null) {
+        SkinRecoveryDialog(
+          notice = activeNotice,
+          onDismiss = viewModel::dismissSkinRecoveryNotice,
+          onRetrySafeBootSkin = viewModel::retrySafeBootSkin,
+          onRevertPartialSkin = viewModel::revertPartialSkin,
+          onUseRawOgColors = viewModel::useRawOgColorsForSkin,
+          onResolveDuplicate = viewModel::resolveDuplicateSkinImport,
+          onConfirmWrongSlotRedirect = viewModel::confirmWrongSlotRedirect,
+        )
+      }
     }
-  }
   }
 }
 

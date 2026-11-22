@@ -84,7 +84,7 @@ fun EqualizerPanel(
     Column(modifier = Modifier.fillMaxWidth()) {
       ChassisTitleBar(
         title = "DROIDAMP EQUALIZER",
-        customSprite = skin.sprites.eqTitleBarActive ?: skin.sprites.titleBarActive,
+        customSprite = skin.sprites.resolvedEqHeader.takeIf { skin.sprites.hasCompletePanelHeaders },
       )
 
       Column(

@@ -229,6 +229,13 @@ This log records the key product, UX, and engineering decisions made during the 
   - Cut releases on `release`: merge `master` → `release`, bump version in `app/build.gradle.kts`, update `README.md` screenshots locally via AGY whenever UI screens changed, tag `vX.Y.Z[-alpha.N]`, and push — `.github/workflows/release.yml` builds, audits, and publishes the GitHub Release + APK automatically.
 - **Rationale**: Gives clean mechanical CI/CD guardrails in GitHub Actions without paying the slow/flaky cost of KVM-less Android emulators in CI, while letting AGY handle fast local visual screenshot refreshes and feature-branch hygiene.
 
+## ADR-027: Milestone 5 Open Design Question — Making `.wsz` Skins Feel Native
+- **Date**: 2026-11-20
+- **Status**: Superseded by `ADR-028`
+- **Problem Statement**:
+  - Real-world Winamp 2.x `.wsz` archives use 24-bit opaque BMPs (`cbuttons.bmp`, `shufrep.bmp`, `monoster.bmp`, `volume.bmp`, `eqmain.bmp`) with **no alpha channel** — surrounding `main.bmp` / `eqmain.bmp` textures are baked into every sprite's corners, causing visible rectangular seams on round/illustrated skins (`Microchip_2`, `Winamp5_Classified`) and leaving mobile-only controls (`QUEUE`, `LIBRARY`, `REM`, `MISC`, `LIST`, `[▶]`/`[+]`) spriteless.
+- **Resolution**: Resolved in `ADR-028` by pairing an **Augmented `.wsz` container** (`droidamp.json` + optional alpha-PNG sprites + dual-state drawer header) with a **Smart Legacy `.wsz` Vector-Chrome Default** (+ optional Classic Raw BMP toggle).
+
 ## ADR-028: Augmented `.wsz` Skin Format, Smart Legacy Fallback & Dual-State Drawer Header
 - **Date**: 2026-11-22
 - **Status**: Accepted *(Resolves Milestone 5 product direction)*

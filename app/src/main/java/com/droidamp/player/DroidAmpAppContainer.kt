@@ -110,6 +110,9 @@ class DroidAmpAppContainer private constructor(
       playlistCodec = playlistCodec,
       autoEqCatalogProvider = autoEqCatalogProvider,
       skinRepository = skinRepository,
+      eqfCodec = eqfCodec,
+      q2Codec = q2Codec,
+      iniCodec = iniCodec,
     )
 
   companion object {
@@ -128,6 +131,9 @@ class DroidAmpAppContainer private constructor(
       playlistCodec: PlaylistFileCodec = WinampPlaylistCodec(),
       autoEqCatalogProvider: AutoEqCatalogProvider = EmptyAutoEqCatalogProvider,
       skinRepository: SkinRepository = StaticSkinRepository(),
+      eqfCodec: EqfCodec = BinaryEqfCodec(),
+      q2Codec: Q2Codec = WinampQ2Codec(),
+      iniCodec: WinampIniCodec = WinampIniParser(),
     ): ViewModelProvider.Factory =
       object : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
@@ -142,6 +148,9 @@ class DroidAmpAppContainer private constructor(
             playlistCodec = playlistCodec,
             autoEqCatalogProvider = autoEqCatalogProvider,
             skinRepository = skinRepository,
+            eqfCodec = eqfCodec,
+            q2Codec = q2Codec,
+            iniCodec = iniCodec,
           ) as T
         }
       }

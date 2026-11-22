@@ -144,7 +144,10 @@ fun MainDeckPanel(
 
   HardwarePanel(modifier = modifier.fillMaxWidth()) {
     Column(modifier = Modifier.fillMaxWidth()) {
-      ChassisTitleBar(title = "DROIDAMP")
+      ChassisTitleBar(
+        title = "DROIDAMP",
+        customSprite = skin.sprites.resolvedDeckHeader.takeIf { skin.sprites.hasCompletePanelHeaders },
+      )
 
       Column(
         modifier = Modifier.fillMaxWidth().padding(skin.metrics.panelPadding),
